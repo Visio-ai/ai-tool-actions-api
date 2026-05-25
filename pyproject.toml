@@ -1,0 +1,40 @@
+[project]
+name = "capabilities-solutions-api"
+version = "0.1.0"
+description = "Capabilities & Solutions API for versioned pipeline composition"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.38",
+    "opentelemetry-instrumentation-fastapi>=0.59b0",
+    "opentelemetry-instrumentation-psycopg>=0.59b0",
+    "opentelemetry-sdk>=1.38",
+    "psycopg[binary,pool]>=3.2",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.8",
+    "pyyaml>=6.0",
+    "uvicorn>=0.35",
+    "visio-ml-utils[structlog]",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio>=1.3",
+    "testcontainers[postgres]>=4.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["capabilities_solutions_api"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.uv.sources]
+visio-ml-utils = { git = "https://github.com/Visio-ai/visio-research-models.git", subdirectory = "shared/visio-ml-utils" }
