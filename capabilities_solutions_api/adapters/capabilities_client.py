@@ -52,7 +52,9 @@ def _inference_cost_from(d: dict | None) -> InferenceCost | None:
 
 
 def _snapshot_from(data: dict) -> CapabilitySnapshot:
-    raw_cost = data.get("inference_cost") or data.get("cost")
+    # service capabilities carry a free-form `cost` dict (different schema);
+    # only inference_cost has the InferenceCost shape
+    raw_cost = data.get("inference_cost")
     return CapabilitySnapshot(
         id=UUID(data["id"]),
         kind=data["kind"],

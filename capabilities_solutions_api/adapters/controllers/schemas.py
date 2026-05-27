@@ -77,6 +77,7 @@ class ActionStepResponse(BaseModel):
     position: int
     depends_on: list[str]
     user_params: dict[str, Any]
+    internal_config: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
     @classmethod
@@ -91,6 +92,7 @@ class ActionStepResponse(BaseModel):
             position=step.position,
             depends_on=list(step.depends_on),
             user_params=dict(step.user_params),
+            internal_config=dict(step.internal_config),
             created_at=step.created_at,
         )
 
@@ -171,6 +173,7 @@ class ToolActionResponse(BaseModel):
     version: int
     sha: str
     user_params: dict[str, Any]
+    internal_config: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
     slas: list[ToolActionSLASchema]
@@ -194,6 +197,7 @@ class ToolActionResponse(BaseModel):
             version=ta.version,
             sha=ta.sha,
             user_params=dict(ta.user_params),
+            internal_config=dict(ta.internal_config),
             created_at=ta.created_at,
             updated_at=ta.updated_at,
             slas=[ToolActionSLASchema.from_domain(s) for s in ta.slas],

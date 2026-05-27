@@ -96,17 +96,8 @@ class ToolAction:
 
 
 @dataclass(slots=True)
-class StepCostBreakdown:
-    step_id: str
-    capability_id: UUID | None
-    cost: InferenceCost | None
-    error: str | None = None
-
-
-@dataclass(slots=True)
 class ToolActionPricing:
     tool_action_id: UUID
-    breakdown: list[StepCostBreakdown]
     totals: InferenceCost
 
 

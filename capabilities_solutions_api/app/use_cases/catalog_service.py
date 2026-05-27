@@ -9,7 +9,6 @@ from capabilities_solutions_api.domain.models import (
     InferenceCost,
     SensorAssignment,
     SensorAssignmentDraft,
-    StepCostBreakdown,
     ToolAction,
     ToolActionDraft,
     ToolActionPricing,
@@ -102,7 +101,7 @@ class ToolActionCatalogService:
 
     async def get_pricing(self, tool_action_id: UUID) -> ToolActionPricing:
         ta = await self.get_tool_action(tool_action_id)
-        breakdown: list[StepCostBreakdown] = []
+        totals = InferenceCost()
 
         for step in ta.steps:
             if step.capability_id is None:
@@ -110,35 +109,17 @@ class ToolActionCatalogService:
             try:
                 snap = await self.capabilities_client.get(step.capability_id)
             except NotFoundError:
-                breakdown.append(StepCostBreakdown(
-                    step_id=step.step_id,
-                    capability_id=step.capability_id,
-                    cost=None,
-                    error="capability not found",
-                ))
                 continue
-            breakdown.append(StepCostBreakdown(
-                step_id=step.step_id,
-                capability_id=step.capability_id,
-                cost=snap.cost,
-            ))
-
-        totals = InferenceCost()
-        for entry in breakdown:
-            if entry.cost:
+            if snap.cost:
                 totals = InferenceCost(
-                    hardware=totals.hardware or entry.cost.hardware,
-                    rate_per_hour_usd=totals.rate_per_hour_usd + entry.cost.rate_per_hour_usd,
-                    inference_time_ms_per_frame=totals.inference_time_ms_per_frame + entry.cost.inference_time_ms_per_frame,
-                    cost_per_frame_usd=totals.cost_per_frame_usd + entry.cost.cost_per_frame_usd,
-                    cost_per_camera_day_usd_at_15fps=totals.cost_per_camera_day_usd_at_15fps + entry.cost.cost_per_camera_day_usd_at_15fps,
+                    hardware=totals.hardware or snap.cost.hardware,
+                    rate_per_hour_usd=totals.rate_per_hour_usd + snap.cost.rate_per_hour_usd,
+                    inference_time_ms_per_frame=totals.inference_time_ms_per_frame + snap.cost.inference_time_ms_per_frame,
+                    cost_per_frame_usd=totals.cost_per_frame_usd + snap.cost.cost_per_frame_usd,
+                    cost_per_camera_day_usd_at_15fps=totals.cost_per_camera_day_usd_at_15fps + snap.cost.cost_per_camera_day_usd_at_15fps,
                 )
 
-        return ToolActionPricing(
-            tool_action_id=tool_action_id,
-            breakdown=breakdown,
-            totals=totals,
-        )
+        return ToolActionPricing(tool_action_id=tool_action_id, totals=totals)
 
     async def list_sensor_assignments(self, sensor_id: str) -> list[SensorAssignment]:
         return await self.repository.list_sensor_assignments(sensor_id)
