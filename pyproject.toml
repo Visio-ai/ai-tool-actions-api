@@ -1,7 +1,7 @@
 [project]
-name = "capabilities-solutions-api"
+name = "tool-actions-api"
 version = "0.1.0"
-description = "Capabilities & Solutions API for versioned pipeline composition"
+description = "Visio AI Tool Actions API — versioned pipeline compositions referencing capabilities"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
@@ -13,7 +13,6 @@ dependencies = [
     "psycopg[binary,pool]>=3.2",
     "pydantic>=2.10",
     "pydantic-settings>=2.8",
-    "pyyaml>=6.0",
     "uvicorn>=0.35",
     "visio-ml-utils[structlog]",
 ]
@@ -23,6 +22,8 @@ dev = [
     "pytest>=9.0",
     "pytest-asyncio>=1.3",
     "testcontainers[postgres]>=4.13",
+    "httpx>=0.28",
+    "respx>=0.21",
 ]
 
 [build-system]

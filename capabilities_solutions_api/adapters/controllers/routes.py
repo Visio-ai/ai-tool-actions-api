@@ -2,50 +2,25 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Request, status
 
 from capabilities_solutions_api.adapters.controllers.schemas import (
+    HealthResponse,
     SensorAssignmentCreateRequest,
     SensorAssignmentResponse,
     SensorAssignmentUpdateRequest,
-    CapabilityCreateRequest,
-    CapabilityInternalConfigResponse,
-    CapabilityResponse,
-    CapabilitySchemaResponse,
-    CapabilityUpdateRequest,
-    HealthResponse,
-    SolutionCreateRequest,
-    SolutionResponse,
-    SolutionUpdateRequest,
+    ToolActionCreateRequest,
+    ToolActionResponse,
+    ToolActionUpdateRequest,
 )
-from capabilities_solutions_api.app.use_cases.catalog_service import CatalogService
-from capabilities_solutions_api.domain.models import (
-    ClassicAlgorithmCapabilityDraft,
-    ModelCapabilityDraft,
-    SensorAssignmentDraft,
-    SolutionDraft,
-    SolutionStepDraft,
-)
+from capabilities_solutions_api.app.use_cases.catalog_service import ToolActionCatalogService
+from capabilities_solutions_api.domain.models import ToolActionDraft
 
 router = APIRouter()
 
 
-def _service(request: Request) -> CatalogService:
+def _service(request: Request) -> ToolActionCatalogService:
     return request.app.state.catalog_service
-
-
-def _solution_step_drafts(steps) -> list[SolutionStepDraft]:
-    return [
-        SolutionStepDraft(
-            step_id=step.step_id,
-            step_type=step.step_type,
-            capability_id=step.capability_id,
-            position=index,
-            depends_on=list(step.depends_on),
-            user_params=dict(step.user_params),
-        )
-        for index, step in enumerate(steps)
-    ]
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -53,203 +28,130 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@router.get("/capabilities", response_model=list[CapabilityResponse])
-async def list_capabilities(
+# ─── ToolActions ──────────────────────────────────────────────────────────────
+
+@router.get("/tool-actions", response_model=list[ToolActionResponse])
+async def list_tool_actions(
     request: Request,
-    capability_type: str | None = None,
-    algorithm: str | None = None,
-) -> list[CapabilityResponse]:
-    service = _service(request)
-    capabilities = await service.list_capabilities(capability_type, algorithm)
-    return [CapabilityResponse.from_entity(item) for item in capabilities]
+    status: str | None = None,
+    sensor_type: str | None = None,
+    category: str | None = None,
+) -> list[ToolActionResponse]:
+    tas = await _service(request).list_tool_actions(status, sensor_type, category)
+    return [ToolActionResponse.from_entity(ta) for ta in tas]
 
 
-@router.get("/capabilities/{capability_id}", response_model=CapabilityResponse)
-async def get_capability(request: Request, capability_id: UUID) -> CapabilityResponse:
-    service = _service(request)
-    capability = await service.get_capability(capability_id)
-    return CapabilityResponse.from_entity(capability)
-
-
-@router.post("/capabilities", response_model=CapabilityResponse, status_code=status.HTTP_201_CREATED)
-async def create_capability(
+@router.get("/tool-actions/{tool_action_id}", response_model=ToolActionResponse)
+async def get_tool_action(
     request: Request,
-    payload: CapabilityCreateRequest,
-) -> CapabilityResponse:
-    service = _service(request)
-    if payload.kind == "model":
-        draft = ModelCapabilityDraft(
-            capability_type=payload.capability_type,
-            algorithm=payload.algorithm,
-            model_name=payload.model_name,
-            model_version=payload.model_version,
-            confidence_threshold=payload.confidence_threshold,
-            user_params=payload.user_params,
-            internal_config=payload.internal_config,
-        )
-    else:
-        draft = ClassicAlgorithmCapabilityDraft(
-            capability_type=payload.capability_type,
-            algorithm=payload.algorithm,
-            user_params=payload.user_params,
-            internal_config=payload.internal_config,
-        )
-    capability = await service.create_capability(draft)
-    return CapabilityResponse.from_entity(capability)
+    tool_action_id: UUID,
+) -> ToolActionResponse:
+    ta = await _service(request).get_tool_action(tool_action_id)
+    return ToolActionResponse.from_entity(ta)
 
 
-@router.patch("/capabilities/{capability_id}", response_model=CapabilityResponse)
-async def update_capability(
-    request: Request,
-    capability_id: UUID,
-    payload: CapabilityUpdateRequest,
-) -> CapabilityResponse:
-    service = _service(request)
-    capability = await service.update_capability(
-        capability_id,
-        payload.confidence_threshold,
-        payload.user_params,
-    )
-    return CapabilityResponse.from_entity(capability)
-
-
-@router.get("/capabilities/{capability_id}/schema", response_model=CapabilitySchemaResponse)
-async def get_capability_schema(
-    request: Request,
-    capability_id: UUID,
-) -> CapabilitySchemaResponse:
-    service = _service(request)
-    schema = await service.get_capability_schema(capability_id)
-    return CapabilitySchemaResponse(capability_id=capability_id, json_schema=schema)
-
-
-@router.get(
-    "/capabilities/{capability_id}/internal-config",
-    response_model=CapabilityInternalConfigResponse,
+@router.post(
+    "/tool-actions",
+    response_model=ToolActionResponse,
+    status_code=status.HTTP_201_CREATED,
 )
-async def get_capability_internal_config(
+async def create_tool_action(
     request: Request,
-    capability_id: UUID,
-) -> CapabilityInternalConfigResponse:
-    service = _service(request)
-    capability = await service.get_capability(capability_id)
-    return CapabilityInternalConfigResponse(
-        capability_id=capability_id,
-        internal_config=capability.internal_config,
-    )
+    payload: ToolActionCreateRequest,
+) -> ToolActionResponse:
+    draft = payload.to_draft()
+    ta = await _service(request).create_tool_action(draft)
+    return ToolActionResponse.from_entity(ta)
 
 
-@router.get("/solutions", response_model=list[SolutionResponse])
-async def list_solutions(
+@router.patch("/tool-actions/{tool_action_id}", response_model=ToolActionResponse)
+async def update_tool_action(
     request: Request,
-    name: str | None = None,
-) -> list[SolutionResponse]:
-    service = _service(request)
-    solutions = await service.list_solutions(name)
-    response: list[SolutionResponse] = []
-    for solution in solutions:
-        _, steps, capabilities = await service.get_solution(solution.id)
-        response.append(SolutionResponse.from_entities(solution, steps, capabilities))
-    return response
+    tool_action_id: UUID,
+    payload: ToolActionUpdateRequest,
+) -> ToolActionResponse:
+    svc = _service(request)
+    current = await svc.get_tool_action(tool_action_id)
 
-
-@router.get("/solutions/{solution_id}", response_model=SolutionResponse)
-async def get_solution(request: Request, solution_id: UUID) -> SolutionResponse:
-    service = _service(request)
-    solution, steps, capabilities = await service.get_solution(solution_id)
-    return SolutionResponse.from_entities(solution, steps, capabilities)
-
-
-@router.post("/solutions", response_model=SolutionResponse, status_code=status.HTTP_201_CREATED)
-async def create_solution(
-    request: Request,
-    payload: SolutionCreateRequest,
-) -> SolutionResponse:
-    service = _service(request)
-    solution = await service.create_solution(
-        SolutionDraft(
-            name=payload.name,
-            description=payload.description,
-            user_params=payload.user_params,
+    draft = ToolActionDraft(
+        name=current.name,
+        display_name=payload.display_name if payload.display_name is not None else current.display_name,
+        category=payload.category if payload.category is not None else current.category,
+        status=payload.status if payload.status is not None else current.status,
+        sensor_type=payload.sensor_type if payload.sensor_type is not None else current.sensor_type,
+        supported_modes=list(payload.supported_modes) if payload.supported_modes is not None else list(current.supported_modes),
+        setup=dict(payload.setup) if payload.setup is not None else dict(current.setup),
+        output_schema_ref=payload.output_schema_ref if payload.output_schema_ref is not None else current.output_schema_ref,
+        use_cases=payload.use_cases if payload.use_cases is not None else current.use_cases,
+        technical_overview=payload.technical_overview if payload.technical_overview is not None else current.technical_overview,
+        limitations=payload.limitations if payload.limitations is not None else current.limitations,
+        user_params=dict(payload.user_params) if payload.user_params is not None else dict(current.user_params),
+        internal_config=dict(payload.internal_config) if payload.internal_config is not None else dict(current.internal_config),
+        slas=[s.to_domain() for s in payload.slas] if payload.slas is not None else list(current.slas),
+        steps=(
+            [s.to_draft() for s in payload.steps]
+            if payload.steps is not None
+            else [
+                _step_to_draft(s)
+                for s in current.steps
+            ]
         ),
-        _solution_step_drafts(payload.steps),
     )
-    solution, steps, capabilities = await service.get_solution(solution.id)
-    return SolutionResponse.from_entities(solution, steps, capabilities)
+    updated = await svc.update_tool_action(tool_action_id, draft)
+    return ToolActionResponse.from_entity(updated)
 
 
-@router.patch("/solutions/{solution_id}", response_model=SolutionResponse)
-async def update_solution(
+@router.delete("/tool-actions/{tool_action_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tool_action(
     request: Request,
-    solution_id: UUID,
-    payload: SolutionUpdateRequest,
-) -> SolutionResponse:
-    service = _service(request)
-    updated = await service.update_solution(
-        solution_id,
-        description=payload.description,
-        user_params=payload.user_params,
-        steps=None if payload.steps is None else _solution_step_drafts(payload.steps),
-    )
-    solution, steps, capabilities = await service.get_solution(updated.id)
-    return SolutionResponse.from_entities(solution, steps, capabilities)
+    tool_action_id: UUID,
+) -> None:
+    await _service(request).delete_tool_action(tool_action_id)
 
 
-@router.delete("/solutions/{solution_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_solution(request: Request, solution_id: UUID) -> Response:
-    service = _service(request)
-    await service.delete_solution(solution_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+@router.get("/tool-actions/{tool_action_id}/config")
+async def get_tool_action_config(
+    request: Request,
+    tool_action_id: UUID,
+) -> dict:
+    return await _service(request).get_config(tool_action_id)
 
 
-@router.get("/solutions/{solution_id}/config")
-async def get_solution_config(request: Request, solution_id: UUID) -> dict:
-    service = _service(request)
-    return await service.get_solution_config(solution_id)
+@router.get("/tool-actions/{tool_action_id}/pricing")
+async def get_tool_action_pricing(
+    request: Request,
+    tool_action_id: UUID,
+) -> dict:
+    import dataclasses
+    pricing = await _service(request).get_pricing(tool_action_id)
+    return dataclasses.asdict(pricing)
 
 
-@router.get("/internal/solutions/by-name/{name}")
-async def get_solution_by_name(request: Request, name: str) -> dict:
-    service = _service(request)
-    solution, _, _ = await service.get_solution_by_name_or_alias(name)
-    return {
-        "id": str(solution.id),
-        "name": solution.name,
-        "sha": solution.sha,
-        "version": solution.version,
-        "capability": solution.internal_config.get("pipeline_capability", ""),
-        "legacy_aliases": solution.internal_config.get("legacy_aliases", []),
-    }
+@router.get("/internal/tool-actions/by-name/{name}", response_model=ToolActionResponse)
+async def get_tool_action_by_name(
+    request: Request,
+    name: str,
+) -> ToolActionResponse:
+    ta = await _service(request).get_tool_action_by_name(name)
+    return ToolActionResponse.from_entity(ta)
 
 
-@router.get("/internal/solutions/by-name/{name}/config")
-async def get_solution_config_by_name(request: Request, name: str) -> dict:
-    service = _service(request)
-    return await service.get_solution_config_by_name_or_alias(name)
-
+# ─── SensorAssignments ────────────────────────────────────────────────────────
 
 @router.get(
-    "/sensors/{sensor_id}/solutions",
+    "/sensors/{sensor_id}/tool-actions",
     response_model=list[SensorAssignmentResponse],
 )
 async def list_sensor_assignments(
     request: Request,
     sensor_id: str,
 ) -> list[SensorAssignmentResponse]:
-    service = _service(request)
-    assignments = await service.list_sensor_assignments(sensor_id)
-    return [
-        SensorAssignmentResponse.from_entities(
-            item["assignment"],
-            item["solution"],
-            drifted=item["drifted"],
-        )
-        for item in assignments
-    ]
+    assignments = await _service(request).list_sensor_assignments(sensor_id)
+    return [SensorAssignmentResponse.from_entity(a) for a in assignments]
 
 
 @router.post(
-    "/sensors/{sensor_id}/solutions",
+    "/sensors/{sensor_id}/tool-actions",
     response_model=SensorAssignmentResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -258,61 +160,66 @@ async def create_sensor_assignment(
     sensor_id: str,
     payload: SensorAssignmentCreateRequest,
 ) -> SensorAssignmentResponse:
-    service = _service(request)
-    assignment = await service.create_sensor_assignment(
-        sensor_id,
-        payload.solution_id,
-        payload.config_overrides,
-        is_active=payload.is_active,
-    )
-    solution, _, _ = await service.get_solution(assignment.solution_id)
-    return SensorAssignmentResponse.from_entities(assignment, solution, drifted=False)
+    draft = payload.to_draft(sensor_id)
+    assignment = await _service(request).create_sensor_assignment(draft)
+    return SensorAssignmentResponse.from_entity(assignment)
+
+
+@router.get(
+    "/sensors/{sensor_id}/tool-actions/{tool_action_id}",
+    response_model=SensorAssignmentResponse,
+)
+async def get_sensor_assignment(
+    request: Request,
+    sensor_id: str,
+    tool_action_id: UUID,
+) -> SensorAssignmentResponse:
+    assignment = await _service(request).get_sensor_assignment(sensor_id, tool_action_id)
+    return SensorAssignmentResponse.from_entity(assignment)
 
 
 @router.patch(
-    "/sensors/{sensor_id}/solutions/{assignment_id}",
+    "/sensors/{sensor_id}/tool-actions/{tool_action_id}",
     response_model=SensorAssignmentResponse,
 )
 async def update_sensor_assignment(
     request: Request,
     sensor_id: str,
-    assignment_id: UUID,
+    tool_action_id: UUID,
     payload: SensorAssignmentUpdateRequest,
 ) -> SensorAssignmentResponse:
-    service = _service(request)
-    assignment = await service.update_sensor_assignment(
+    assignment = await _service(request).update_sensor_assignment(
         sensor_id,
-        assignment_id,
-        is_active=payload.is_active,
-        config_overrides=payload.config_overrides,
+        tool_action_id,
+        payload.is_active,
+        payload.config_overrides,
     )
-    solution, _, _ = await service.get_solution(assignment.solution_id)
-    return SensorAssignmentResponse.from_entities(
-        assignment,
-        solution,
-        drifted=assignment.solution_sha != solution.sha,
-    )
+    return SensorAssignmentResponse.from_entity(assignment)
 
 
 @router.delete(
-    "/sensors/{sensor_id}/solutions/{assignment_id}",
+    "/sensors/{sensor_id}/tool-actions/{tool_action_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_sensor_assignment(
     request: Request,
     sensor_id: str,
-    assignment_id: UUID,
-) -> Response:
-    service = _service(request)
-    await service.delete_sensor_assignment(sensor_id, assignment_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    tool_action_id: UUID,
+) -> None:
+    await _service(request).delete_sensor_assignment(sensor_id, tool_action_id)
 
 
-@router.get("/sensors/{sensor_id}/solutions/{assignment_id}/config")
-async def get_sensor_assignment_config(
-    request: Request,
-    sensor_id: str,
-    assignment_id: UUID,
-) -> dict:
-    service = _service(request)
-    return await service.get_sensor_assignment_config(sensor_id, assignment_id)
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _step_to_draft(step):
+    from capabilities_solutions_api.domain.models import ActionStepDraft
+    return ActionStepDraft(
+        step_id=step.step_id,
+        step_type=step.step_type,
+        capability_id=step.capability_id,
+        capability_sha=step.capability_sha,
+        position=step.position,
+        depends_on=list(step.depends_on),
+        user_params=dict(step.user_params),
+        internal_config=dict(step.internal_config),
+    )

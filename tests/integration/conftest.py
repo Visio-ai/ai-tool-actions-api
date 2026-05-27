@@ -1,71 +1,58 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
-import psycopg
 import pytest
-import pytest_asyncio
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from psycopg_pool import AsyncConnectionPool
+from httpx import ASGITransport, AsyncClient
 from testcontainers.postgres import PostgresContainer
 
-from capabilities_solutions_api.adapters.repositories.postgres import PostgresCatalogRepository
+from capabilities_solutions_api.adapters.capabilities_client import CapabilitySnapshot
+from capabilities_solutions_api.adapters.repositories.postgres import PostgresToolActionRepository
+from capabilities_solutions_api.app.use_cases.catalog_service import ToolActionCatalogService
+from capabilities_solutions_api.main.app import create_app
 from capabilities_solutions_api.main.settings import Settings
 
 
-SCHEMA_PATH = Path(__file__).resolve().parents[2] / "database" / "schema.sql"
-
-
-def _reset_database(dsn: str) -> None:
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        conn.execute("DROP SCHEMA IF EXISTS public CASCADE")
-        conn.execute("CREATE SCHEMA public")
-
-
-def _apply_schema(dsn: str) -> None:
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        conn.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
-
-
-async def _create_pool(dsn: str) -> AsyncConnectionPool:
-    pool = AsyncConnectionPool(conninfo=dsn, open=False)
-    await pool.open()
-    return pool
-
-
 @pytest.fixture(scope="session")
-def test_settings() -> Iterator[Settings]:
-    with PostgresContainer("postgres:17") as postgres:
-        yield Settings(
-            database_dsn=postgres.get_connection_url().replace("+psycopg2", ""),
-            auto_apply_schema=True,
-            json_logs=False,
+def postgres_container():
+    with PostgresContainer("postgres:17") as pg:
+        yield pg
+
+
+@pytest.fixture
+def mock_capabilities_client():
+    client = AsyncMock()
+    client.get = AsyncMock(
+        return_value=CapabilitySnapshot(
+            id=uuid4(),
+            kind="model",
+            sha="mock_sha_resolve",
+            cost={"cost_type": "per_frame", "unit_cost_usd": 0.000002},
         )
+    )
+    client.get_by_sha = AsyncMock(return_value=None)
+    return client
 
 
-@pytest.fixture()
-def app(test_settings: Settings) -> Iterator[FastAPI]:
-    from capabilities_solutions_api.main.app import create_app
+@pytest.fixture
+async def app(postgres_container, mock_capabilities_client):
+    settings = Settings(
+        database_dsn=postgres_container.get_connection_url().replace("postgresql+psycopg2", "postgresql"),
+        capabilities_api_url="http://mock-capabilities-api",
+        auto_apply_schema=True,
+        json_logs=False,
+    )
+    application = create_app(settings)
+    async with application.router.lifespan_context(application):
+        application.state.catalog_service = ToolActionCatalogService(
+            repository=PostgresToolActionRepository(application.state.db_pool),
+            capabilities_client=mock_capabilities_client,
+        )
+        yield application
 
-    _reset_database(test_settings.database_dsn)
-    yield create_app(test_settings)
 
-
-@pytest.fixture()
-def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest_asyncio.fixture()
-async def repository(test_settings: Settings) -> Iterator[PostgresCatalogRepository]:
-    _reset_database(test_settings.database_dsn)
-    _apply_schema(test_settings.database_dsn)
-
-    pool = await _create_pool(test_settings.database_dsn)
-    try:
-        yield PostgresCatalogRepository(pool)
-    finally:
-        await pool.close()
+@pytest.fixture
+async def client(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
