@@ -1,268 +1,195 @@
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock
+from uuid import uuid4, UUID
 
 import pytest
 
-from capabilities_solutions_api.app.ports.repository import CatalogRepository
-from capabilities_solutions_api.app.use_cases.catalog_service import CatalogService
-from capabilities_solutions_api.domain.errors import ValidationError
+from capabilities_solutions_api.adapters.capabilities_client import CapabilitySnapshot
+from capabilities_solutions_api.app.use_cases.catalog_service import ToolActionCatalogService
+from capabilities_solutions_api.domain.errors import ConflictError, NotFoundError, ValidationError
 from capabilities_solutions_api.domain.models import (
-    AnyCapabilityDraft,
-    Capability,
-    ClassicAlgorithmCapability,
-    ModelCapability,
-    ModelCapabilityDraft,
+    ActionStep,
+    ActionStepDraft,
     SensorAssignment,
-    SensorAssignmentDraft,
-    Solution,
-    SolutionDraft,
-    SolutionStep,
-    SolutionStepDraft,
+    ToolAction,
+    ToolActionDraft,
+    ToolActionSLA,
 )
 
 from datetime import datetime, timezone
 
-_NOW = datetime.now(tz=timezone.utc)
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def _model_capability(capability_id: UUID | None = None) -> ModelCapability:
-    return ModelCapability(
-        id=capability_id or uuid4(),
-        capability_type="object_detection",
-        algorithm="rfdetr",
+def _make_step(step_id: str = "od", position: int = 0, cap_sha: str = "abc") -> ActionStep:
+    return ActionStep(
+        id=uuid4(),
+        tool_action_id=uuid4(),
+        step_id=step_id,
+        step_type="model",
+        capability_id=None,
+        capability_sha=cap_sha,
+        position=position,
+        depends_on=[],
+        user_params={},
+        internal_config={},
+        created_at=_now(),
+    )
+
+
+def _make_tool_action(**overrides) -> ToolAction:
+    defaults = dict(
+        id=uuid4(),
+        name="person-heatmap",
+        display_name="",
+        category="spatial-analytics",
+        status="active",
+        sensor_type="camera",
+        supported_modes=["video"],
+        setup={},
+        output_schema_ref="schemas/ph/v1",
+        use_cases="",
+        technical_overview="",
+        limitations="",
+        version=1,
+        sha="abc123sha16cha",
+        user_params={},
+        internal_config={},
+        created_at=_now(),
+        updated_at=_now(),
+        slas=[ToolActionSLA(delivery_mode="video", sla_seconds=60)],
+        steps=[_make_step()],
+    )
+    defaults.update(overrides)
+    return ToolAction(**defaults)
+
+
+def _make_service(repo=None, caps_client=None):
+    if repo is None:
+        repo = AsyncMock()
+    if caps_client is None:
+        caps_client = AsyncMock()
+    return ToolActionCatalogService(repository=repo, capabilities_client=caps_client)
+
+
+@pytest.mark.asyncio
+async def test_get_tool_action_not_found():
+    repo = AsyncMock()
+    repo.get_tool_action.return_value = None
+    svc = _make_service(repo=repo)
+    with pytest.raises(NotFoundError):
+        await svc.get_tool_action(uuid4())
+
+
+@pytest.mark.asyncio
+async def test_create_tool_action_conflict():
+    repo = AsyncMock()
+    existing = _make_tool_action()
+    repo.get_tool_action_by_sha.return_value = existing
+    svc = _make_service(repo=repo)
+    draft = ToolActionDraft(
+        name="person-heatmap",
+        supported_modes=["video"],
+        slas=[ToolActionSLA(delivery_mode="video", sla_seconds=60)],
+    )
+    with pytest.raises(ConflictError):
+        await svc.create_tool_action(draft)
+
+
+@pytest.mark.asyncio
+async def test_create_resolves_capability_sha():
+    cap_id = uuid4()
+    snap = CapabilitySnapshot(id=cap_id, kind="model", sha="resolved_sha_xx", cost=None)
+    caps_client = AsyncMock()
+    caps_client.get.return_value = snap
+
+    repo = AsyncMock()
+    repo.get_tool_action_by_sha.return_value = None
+    repo.create_tool_action.side_effect = lambda draft: _make_tool_action(name=draft.name)
+    svc = _make_service(repo=repo, caps_client=caps_client)
+
+    draft = ToolActionDraft(
+        name="test-action",
+        steps=[
+            ActionStepDraft(step_id="od", step_type="model", capability_id=cap_id, position=0)
+        ],
+    )
+    await svc.create_tool_action(draft)
+    assert draft.steps[0].capability_sha == "resolved_sha_xx"
+    caps_client.get.assert_called_once_with(cap_id)
+
+
+@pytest.mark.asyncio
+async def test_create_skips_resolution_if_sha_already_set():
+    caps_client = AsyncMock()
+    repo = AsyncMock()
+    repo.get_tool_action_by_sha.return_value = None
+    repo.create_tool_action.side_effect = lambda draft: _make_tool_action(name=draft.name)
+    svc = _make_service(repo=repo, caps_client=caps_client)
+
+    draft = ToolActionDraft(
+        name="test-action",
+        steps=[
+            ActionStepDraft(
+                step_id="od",
+                step_type="model",
+                capability_id=uuid4(),
+                capability_sha="already_set_sha",
+                position=0,
+            )
+        ],
+    )
+    await svc.create_tool_action(draft)
+    caps_client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validation_rejects_invalid_step_type():
+    svc = _make_service()
+    draft = ToolActionDraft(
+        name="bad-action",
+        steps=[ActionStepDraft(step_id="x", step_type="invalid_type", position=0)],
+    )
+    with pytest.raises(ValidationError, match="invalid_type"):
+        await svc.create_tool_action(draft)
+
+
+@pytest.mark.asyncio
+async def test_get_pricing_aggregates_by_type():
+    cap_id = uuid4()
+    ta = _make_tool_action(
+        steps=[
+            ActionStep(
+                id=uuid4(),
+                tool_action_id=uuid4(),
+                step_id="od",
+                step_type="model",
+                capability_id=cap_id,
+                capability_sha="sha1",
+                position=0,
+                depends_on=[],
+                user_params={},
+                internal_config={},
+                created_at=_now(),
+            )
+        ]
+    )
+    repo = AsyncMock()
+    repo.get_tool_action.return_value = ta
+
+    snap = CapabilitySnapshot(
+        id=cap_id,
         kind="model",
-        user_params={},
-        internal_config={},
-        sha="abc",
-        created_at=_NOW,
-        updated_at=_NOW,
-        model_name="od-rf-detr",
-        model_version="1.0.0",
-        confidence_threshold=0.5,
+        sha="sha1",
+        cost={"cost_type": "per_frame", "unit_cost_usd": 0.000002},
     )
+    caps_client = AsyncMock()
+    caps_client.get.return_value = snap
 
-
-def _classic_capability(capability_id: UUID | None = None) -> ClassicAlgorithmCapability:
-    return ClassicAlgorithmCapability(
-        id=capability_id or uuid4(),
-        capability_type="zone_analytics",
-        algorithm="zone_eval",
-        kind="classic_algorithm",
-        user_params={},
-        internal_config={},
-        sha="def",
-        created_at=_NOW,
-        updated_at=_NOW,
-    )
-
-
-class InMemoryCatalogRepository(CatalogRepository):
-    def __init__(self, capabilities: dict[UUID, Capability] | None = None) -> None:
-        self._capabilities: dict[UUID, Capability] = capabilities or {}
-
-    async def list_capabilities(
-        self,
-        capability_type: str | None = None,
-        algorithm: str | None = None,
-    ) -> list[Capability]:
-        return list(self._capabilities.values())
-
-    async def get_capability(self, capability_id: UUID) -> Capability | None:
-        return self._capabilities.get(capability_id)
-
-    async def get_capability_by_sha(self, sha: str) -> Capability | None:
-        return next((c for c in self._capabilities.values() if c.sha == sha), None)
-
-    async def create_capability(self, draft: AnyCapabilityDraft) -> Capability:
-        raise NotImplementedError
-
-    async def update_capability(self, capability_id: UUID, draft: AnyCapabilityDraft) -> Capability:
-        raise NotImplementedError
-
-    async def get_capabilities(self, capability_ids: list[UUID]) -> dict[UUID, Capability]:
-        return {cid: self._capabilities[cid] for cid in capability_ids if cid in self._capabilities}
-
-    async def list_solution_ids_for_capability(self, capability_id: UUID) -> list[UUID]:
-        return []
-
-    async def list_solutions(self, name: str | None = None) -> list[Solution]:
-        return []
-
-    async def get_solution(self, solution_id: UUID) -> Solution | None:
-        return None
-
-    async def get_solution_by_name_or_alias(self, name: str) -> Solution | None:
-        return None
-
-    async def create_solution(self, draft: SolutionDraft, steps: list[SolutionStepDraft]) -> Solution:
-        raise NotImplementedError
-
-    async def update_solution(self, solution_id: UUID, draft: SolutionDraft, steps: list[SolutionStepDraft]) -> Solution:
-        raise NotImplementedError
-
-    async def update_solution_sha(self, solution_id: UUID, sha: str) -> Solution:
-        raise NotImplementedError
-
-    async def delete_solution(self, solution_id: UUID) -> None:
-        raise NotImplementedError
-
-    async def get_solution_steps(self, solution_id: UUID) -> list[SolutionStep]:
-        return []
-
-    async def has_active_assignments(self, solution_id: UUID) -> bool:
-        return False
-
-    async def list_sensor_assignments(self, sensor_id: str) -> list[SensorAssignment]:
-        return []
-
-    async def get_sensor_assignment(self, sensor_id: str, assignment_id: UUID) -> SensorAssignment | None:
-        return None
-
-    async def create_sensor_assignment(self, draft: SensorAssignmentDraft) -> SensorAssignment:
-        raise NotImplementedError
-
-    async def update_sensor_assignment(self, sensor_id: str, assignment_id: UUID, draft: SensorAssignmentDraft) -> SensorAssignment:
-        raise NotImplementedError
-
-    async def delete_sensor_assignment(self, sensor_id: str, assignment_id: UUID) -> None:
-        raise NotImplementedError
-
-
-# ─── Validation: inference steps ──────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_inference_step_without_capability_id_rejected() -> None:
-    service = CatalogService(InMemoryCatalogRepository())
-    with pytest.raises(ValidationError, match="requires a capability_id"):
-        await service.create_solution(
-            SolutionDraft(name="s"),
-            [SolutionStepDraft(step_id="run", step_type="async_inference", capability_id=None, position=0)],
-        )
-
-
-@pytest.mark.asyncio
-async def test_inference_step_with_classic_algorithm_capability_rejected() -> None:
-    cap = _classic_capability()
-    service = CatalogService(InMemoryCatalogRepository({cap.id: cap}))
-    with pytest.raises(ValidationError, match="requires a 'model' capability"):
-        await service.create_solution(
-            SolutionDraft(name="s"),
-            [SolutionStepDraft(step_id="run", step_type="inference", capability_id=cap.id, position=0)],
-        )
-
-
-@pytest.mark.asyncio
-async def test_inference_step_with_model_capability_accepted() -> None:
-    cap = _model_capability()
-    repo = InMemoryCatalogRepository({cap.id: cap})
-
-    created: list[Solution] = []
-
-    async def create_solution(draft, steps):
-        sol = Solution(
-            id=uuid4(), name=draft.name, description="", user_params={},
-            internal_config={}, version=1, sha="x", created_at=_NOW, updated_at=_NOW,
-        )
-        created.append(sol)
-        return sol
-
-    repo.create_solution = create_solution
-    service = CatalogService(repo)
-    await service.create_solution(
-        SolutionDraft(name="s"),
-        [SolutionStepDraft(step_id="run", step_type="inference", capability_id=cap.id, position=0)],
-    )
-    assert len(created) == 1
-
-
-# ─── Validation: postprocess / local_capability steps ─────────────────────────
-
-@pytest.mark.asyncio
-async def test_postprocess_step_without_capability_accepted() -> None:
-    repo = InMemoryCatalogRepository()
-    created: list[Solution] = []
-
-    async def create_solution(draft, steps):
-        sol = Solution(
-            id=uuid4(), name=draft.name, description="", user_params={},
-            internal_config={}, version=1, sha="x", created_at=_NOW, updated_at=_NOW,
-        )
-        created.append(sol)
-        return sol
-
-    repo.create_solution = create_solution
-    service = CatalogService(repo)
-    await service.create_solution(
-        SolutionDraft(name="s"),
-        [SolutionStepDraft(step_id="pp", step_type="postprocess", capability_id=None, position=0)],
-    )
-    assert len(created) == 1
-
-
-@pytest.mark.asyncio
-async def test_local_capability_step_with_classic_algorithm_capability_accepted() -> None:
-    cap = _classic_capability()
-    repo = InMemoryCatalogRepository({cap.id: cap})
-    created: list[Solution] = []
-
-    async def create_solution(draft, steps):
-        sol = Solution(
-            id=uuid4(), name=draft.name, description="", user_params={},
-            internal_config={}, version=1, sha="x", created_at=_NOW, updated_at=_NOW,
-        )
-        created.append(sol)
-        return sol
-
-    repo.create_solution = create_solution
-    service = CatalogService(repo)
-    await service.create_solution(
-        SolutionDraft(name="s"),
-        [SolutionStepDraft(step_id="zone", step_type="local_capability", capability_id=cap.id, position=0)],
-    )
-    assert len(created) == 1
-
-
-@pytest.mark.asyncio
-async def test_local_capability_step_with_model_capability_rejected() -> None:
-    cap = _model_capability()
-    service = CatalogService(InMemoryCatalogRepository({cap.id: cap}))
-    with pytest.raises(ValidationError, match="must reference a 'classic_algorithm' capability"):
-        await service.create_solution(
-            SolutionDraft(name="s"),
-            [SolutionStepDraft(step_id="zone", step_type="local_capability", capability_id=cap.id, position=0)],
-        )
-
-
-# ─── Validation: misc ─────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_unsupported_step_type_rejected() -> None:
-    service = CatalogService(InMemoryCatalogRepository())
-    with pytest.raises(ValidationError, match="unsupported step_type"):
-        await service.create_solution(
-            SolutionDraft(name="s"),
-            [SolutionStepDraft(step_id="x", step_type="unsupported", capability_id=uuid4(), position=0)],
-        )
-
-
-# ─── SHA: model vs classic_algorithm are distinct ─────────────────────────────
-
-def test_model_and_classic_sha_differ() -> None:
-    service = CatalogService(InMemoryCatalogRepository())
-    model_sha = service._compute_capability_sha(
-        ModelCapabilityDraft(
-            capability_type="object_detection",
-            algorithm="rfdetr",
-            model_name="od-rf-detr",
-            model_version="1.0.0",
-        )
-    )
-    from capabilities_solutions_api.domain.models import ClassicAlgorithmCapabilityDraft
-    classic_sha = service._compute_capability_sha(
-        ClassicAlgorithmCapabilityDraft(
-            capability_type="object_detection",
-            algorithm="rfdetr",
-        )
-    )
-    assert model_sha != classic_sha
+    svc = _make_service(repo=repo, caps_client=caps_client)
+    pricing = await svc.get_pricing(ta.id)
+    assert pricing["totals_by_type"]["per_frame"] == pytest.approx(0.000002)
+    assert len(pricing["breakdown"]) == 1

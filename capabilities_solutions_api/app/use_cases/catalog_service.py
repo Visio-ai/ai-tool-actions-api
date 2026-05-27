@@ -2,388 +2,193 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from capabilities_solutions_api.app.ports.repository import CatalogRepository
+from capabilities_solutions_api.adapters.capabilities_client import CapabilitiesClient
+from capabilities_solutions_api.app.ports.repository import ToolActionRepository
 from capabilities_solutions_api.domain.errors import ConflictError, NotFoundError, ValidationError
 from capabilities_solutions_api.domain.models import (
-    AnyCapabilityDraft,
-    Capability,
-    ClassicAlgorithmCapabilityDraft,
-    ModelCapability,
-    ModelCapabilityDraft,
+    InferenceCost,
     SensorAssignment,
     SensorAssignmentDraft,
-    Solution,
-    SolutionDraft,
-    SolutionStep,
-    SolutionStepDraft,
+    ToolAction,
+    ToolActionDraft,
+    ToolActionPricing,
 )
-from capabilities_solutions_api.domain.resolver import build_user_schema, resolve_solution_config
-from capabilities_solutions_api.domain.sha import compute_sha
+from capabilities_solutions_api.domain.sha import compute_tool_action_sha
 
-VALID_SOLUTION_STEP_TYPES = {"inference", "async_inference", "postprocess", "local_capability"}
-_INFERENCE_STEP_TYPES = {"inference", "async_inference"}
+VALID_STATUSES = {"draft", "active", "deprecated"}
+VALID_STEP_TYPES = {"model", "classic_algorithm", "service"}
 
 
-class CatalogService:
-    def __init__(self, repository: CatalogRepository) -> None:
+class ToolActionCatalogService:
+    def __init__(
+        self,
+        repository: ToolActionRepository,
+        capabilities_client: CapabilitiesClient,
+    ) -> None:
         self.repository = repository
+        self.capabilities_client = capabilities_client
 
-    async def list_capabilities(
+    async def list_tool_actions(
         self,
-        capability_type: str | None = None,
-        algorithm: str | None = None,
-    ) -> list[Capability]:
-        return await self.repository.list_capabilities(capability_type, algorithm)
+        status: str | None = None,
+        sensor_type: str | None = None,
+        category: str | None = None,
+    ) -> list[ToolAction]:
+        return await self.repository.list_tool_actions(status, sensor_type, category)
 
-    async def get_capability(self, capability_id: UUID) -> Capability:
-        capability = await self.repository.get_capability(capability_id)
-        if capability is None:
-            raise NotFoundError(f"Capability {capability_id} not found")
-        return capability
+    async def get_tool_action(self, tool_action_id: UUID) -> ToolAction:
+        ta = await self.repository.get_tool_action(tool_action_id)
+        if ta is None:
+            raise NotFoundError(f"ToolAction {tool_action_id} not found")
+        return ta
 
-    async def ensure_capability(self, draft: AnyCapabilityDraft) -> Capability:
-        draft.sha = self._compute_capability_sha(draft)
-        existing = await self.repository.get_capability_by_sha(draft.sha)
+    async def get_tool_action_by_name(self, name: str) -> ToolAction:
+        ta = await self.repository.get_tool_action_by_name(name)
+        if ta is None:
+            raise NotFoundError(f"ToolAction '{name}' not found")
+        return ta
+
+    async def create_tool_action(self, draft: ToolActionDraft) -> ToolAction:
+        _validate_draft(draft)
+        await _resolve_capability_shas(draft, self.capabilities_client)
+        draft.sha = compute_tool_action_sha(draft)
+        existing = await self.repository.get_tool_action_by_sha(draft.sha)
         if existing is not None:
-            return existing
-        return await self.repository.create_capability(draft)
+            raise ConflictError(f"ToolAction sha={draft.sha} already exists")
+        return await self.repository.create_tool_action(draft)
 
-    async def create_capability(self, draft: AnyCapabilityDraft) -> Capability:
-        draft.sha = self._compute_capability_sha(draft)
-        existing = await self.repository.get_capability_by_sha(draft.sha)
-        if existing is not None:
-            raise ConflictError(f"Capability SHA {draft.sha} already exists")
-        return await self.repository.create_capability(draft)
-
-    async def update_capability(
+    async def update_tool_action(
         self,
-        capability_id: UUID,
-        confidence_threshold: float | None,
-        user_params: dict,
-    ) -> Capability:
-        current = await self.get_capability(capability_id)
-        if isinstance(current, ModelCapability):
-            new_confidence = confidence_threshold if confidence_threshold is not None else current.confidence_threshold
-            draft: AnyCapabilityDraft = ModelCapabilityDraft(
-                capability_type=current.capability_type,
-                algorithm=current.algorithm,
-                model_name=current.model_name,
-                model_version=current.model_version,
-                confidence_threshold=new_confidence,
-                user_params=user_params,
-                internal_config=current.internal_config,
-            )
-        else:
-            draft = ClassicAlgorithmCapabilityDraft(
-                capability_type=current.capability_type,
-                algorithm=current.algorithm,
-                user_params=user_params,
-                internal_config=current.internal_config,
-            )
-        draft.sha = self._compute_capability_sha(draft)
-        updated = await self.repository.update_capability(capability_id, draft)
-        await self._refresh_solution_shas_for_capability(updated)
-        return updated
+        tool_action_id: UUID,
+        draft: ToolActionDraft,
+    ) -> ToolAction:
+        await self.get_tool_action(tool_action_id)
+        _validate_draft(draft)
+        await _resolve_capability_shas(draft, self.capabilities_client)
+        draft.sha = compute_tool_action_sha(draft)
+        return await self.repository.update_tool_action(tool_action_id, draft)
 
-    async def get_capability_schema(self, capability_id: UUID) -> dict:
-        capability = await self.get_capability(capability_id)
-        return build_user_schema(capability)
+    async def delete_tool_action(self, tool_action_id: UUID) -> None:
+        await self.get_tool_action(tool_action_id)
+        await self.repository.delete_tool_action(tool_action_id)
 
-    async def list_solutions(self, name: str | None = None) -> list[Solution]:
-        return await self.repository.list_solutions(name)
-
-    async def get_solution(self, solution_id: UUID) -> tuple[Solution, list[SolutionStep], dict[UUID, Capability]]:
-        solution = await self.repository.get_solution(solution_id)
-        if solution is None:
-            raise NotFoundError(f"Solution {solution_id} not found")
-        steps = await self.repository.get_solution_steps(solution_id)
-        capability_ids = [step.capability_id for step in steps if step.capability_id is not None]
-        capabilities = await self.repository.get_capabilities(capability_ids)
-        return solution, steps, capabilities
-
-    async def get_solution_by_name_or_alias(
-        self,
-        name: str,
-    ) -> tuple[Solution, list[SolutionStep], dict[UUID, Capability]]:
-        solution = await self.repository.get_solution_by_name_or_alias(name)
-        if solution is None:
-            raise NotFoundError(f"Solution {name!r} not found")
-        steps = await self.repository.get_solution_steps(solution.id)
-        capability_ids = [step.capability_id for step in steps if step.capability_id is not None]
-        capabilities = await self.repository.get_capabilities(capability_ids)
-        return solution, steps, capabilities
-
-    async def create_solution(
-        self,
-        draft: SolutionDraft,
-        steps: list[SolutionStepDraft],
-    ) -> Solution:
-        capabilities = await self.repository.get_capabilities(
-            [step.capability_id for step in steps if step.capability_id is not None]
-        )
-        await self._validate_steps(steps, capabilities)
-        draft.version = 1
-        draft.sha = self._compute_solution_sha(draft, steps, capabilities)
-        return await self.repository.create_solution(draft, steps)
-
-    async def update_solution(
-        self,
-        solution_id: UUID,
-        description: str | None = None,
-        user_params: dict | None = None,
-        steps: list[SolutionStepDraft] | None = None,
-    ) -> Solution:
-        current, current_steps, capabilities = await self.get_solution(solution_id)
-        next_steps = steps if steps is not None else [
-            SolutionStepDraft(
-                step_id=step.step_id,
-                step_type=step.step_type,
-                capability_id=step.capability_id,
-                position=step.position,
-                depends_on=list(step.depends_on),
-                user_params=dict(step.user_params),
-                internal_config=dict(step.internal_config),
-            )
-            for step in current_steps
-        ]
-        if steps is not None:
-            capabilities = await self.repository.get_capabilities(
-                [step.capability_id for step in next_steps if step.capability_id is not None]
-            )
-        await self._validate_steps(next_steps, capabilities)
-
-        draft = SolutionDraft(
-            name=current.name,
-            description=current.description if description is None else description,
-            user_params=current.user_params if user_params is None else user_params,
-            internal_config=current.internal_config,
-            version=current.version + 1,
-        )
-        draft.sha = self._compute_solution_sha(draft, next_steps, capabilities)
-        return await self.repository.update_solution(solution_id, draft, next_steps)
-
-    async def delete_solution(self, solution_id: UUID) -> None:
-        solution = await self.repository.get_solution(solution_id)
-        if solution is None:
-            raise NotFoundError(f"Solution {solution_id} not found")
-        if await self.repository.has_active_assignments(solution_id):
-            raise ConflictError(
-                f"Solution {solution.name} has active sensor assignments and cannot be deleted"
-            )
-        await self.repository.delete_solution(solution_id)
-
-    async def get_solution_config(self, solution_id: UUID) -> dict:
-        solution, steps, capabilities = await self.get_solution(solution_id)
-        return resolve_solution_config(solution, steps, capabilities)
-
-    async def get_solution_config_by_name_or_alias(self, name: str) -> dict:
-        solution, steps, capabilities = await self.get_solution_by_name_or_alias(name)
-        return resolve_solution_config(solution, steps, capabilities)
-
-    async def list_sensor_assignments(self, sensor_id: str) -> list[dict]:
-        assignments = await self.repository.list_sensor_assignments(sensor_id)
-        result: list[dict] = []
-        for assignment in assignments:
-            solution = await self.repository.get_solution(assignment.solution_id)
-            if solution is None:
-                continue
-            result.append(
+    async def get_config(self, tool_action_id: UUID) -> dict:
+        ta = await self.get_tool_action(tool_action_id)
+        return {
+            "tool_action_id": str(tool_action_id),
+            "name": ta.name,
+            "sha": ta.sha,
+            "sensor_type": ta.sensor_type,
+            "supported_modes": ta.supported_modes,
+            "setup": ta.setup,
+            "output_schema_ref": ta.output_schema_ref,
+            "user_params": ta.user_params,
+            "internal_config": ta.internal_config,
+            "steps": [
                 {
-                    "assignment": assignment,
-                    "solution": solution,
-                    "drifted": assignment.solution_sha != solution.sha,
+                    "step_id": s.step_id,
+                    "step_type": s.step_type,
+                    "capability_id": str(s.capability_id) if s.capability_id else None,
+                    "capability_sha": s.capability_sha,
+                    "position": s.position,
+                    "depends_on": s.depends_on,
+                    "user_params": s.user_params,
+                    "internal_config": s.internal_config,
                 }
+                for s in ta.steps
+            ],
+        }
+
+    async def get_pricing(self, tool_action_id: UUID) -> ToolActionPricing:
+        ta = await self.get_tool_action(tool_action_id)
+        totals = InferenceCost()
+
+        for step in ta.steps:
+            if step.capability_id is None:
+                continue
+            try:
+                snap = await self.capabilities_client.get(step.capability_id)
+            except NotFoundError:
+                continue
+            if snap.cost:
+                totals = InferenceCost(
+                    hardware=totals.hardware or snap.cost.hardware,
+                    rate_per_hour_usd=totals.rate_per_hour_usd + snap.cost.rate_per_hour_usd,
+                    inference_time_ms_per_frame=totals.inference_time_ms_per_frame + snap.cost.inference_time_ms_per_frame,
+                    cost_per_frame_usd=totals.cost_per_frame_usd + snap.cost.cost_per_frame_usd,
+                    cost_per_camera_day_usd_at_15fps=totals.cost_per_camera_day_usd_at_15fps + snap.cost.cost_per_camera_day_usd_at_15fps,
+                )
+
+        return ToolActionPricing(tool_action_id=tool_action_id, totals=totals)
+
+    async def list_sensor_assignments(self, sensor_id: str) -> list[SensorAssignment]:
+        return await self.repository.list_sensor_assignments(sensor_id)
+
+    async def get_sensor_assignment(
+        self,
+        sensor_id: str,
+        tool_action_id: UUID,
+    ) -> SensorAssignment:
+        sa = await self.repository.get_sensor_assignment(sensor_id, tool_action_id)
+        if sa is None:
+            raise NotFoundError(
+                f"SensorAssignment sensor={sensor_id} tool_action={tool_action_id} not found"
             )
-        return result
+        return sa
 
     async def create_sensor_assignment(
         self,
-        sensor_id: str,
-        solution_id: UUID,
-        config_overrides: dict,
-        is_active: bool = True,
+        draft: SensorAssignmentDraft,
     ) -> SensorAssignment:
-        solution = await self.repository.get_solution(solution_id)
-        if solution is None:
-            raise NotFoundError(f"Solution {solution_id} not found")
-        draft = SensorAssignmentDraft(
-            sensor_id=sensor_id,
-            solution_id=solution_id,
-            is_active=is_active,
-            config_overrides=config_overrides,
-            solution_sha=solution.sha,
+        ta = await self.get_tool_action(draft.tool_action_id)
+        existing = await self.repository.get_sensor_assignment(
+            draft.sensor_id, draft.tool_action_id
         )
-        return await self.repository.create_sensor_assignment(draft)
+        if existing is not None:
+            raise ConflictError(
+                f"SensorAssignment sensor={draft.sensor_id} tool_action={draft.tool_action_id} already exists"
+            )
+        return await self.repository.create_sensor_assignment(draft, ta.sha)
 
     async def update_sensor_assignment(
         self,
         sensor_id: str,
-        assignment_id: UUID,
+        tool_action_id: UUID,
         is_active: bool | None,
         config_overrides: dict | None,
     ) -> SensorAssignment:
-        assignment = await self.repository.get_sensor_assignment(sensor_id, assignment_id)
-        if assignment is None:
-            raise NotFoundError(f"Camera assignment {assignment_id} not found")
-        solution = await self.repository.get_solution(assignment.solution_id)
-        if solution is None:
-            raise NotFoundError(f"Solution {assignment.solution_id} not found")
-        draft = SensorAssignmentDraft(
-            sensor_id=sensor_id,
-            solution_id=assignment.solution_id,
-            is_active=assignment.is_active if is_active is None else is_active,
-            config_overrides=assignment.config_overrides if config_overrides is None else config_overrides,
-            solution_sha=solution.sha,
+        current = await self.get_sensor_assignment(sensor_id, tool_action_id)
+        return await self.repository.update_sensor_assignment(
+            sensor_id,
+            tool_action_id,
+            is_active if is_active is not None else current.is_active,
+            config_overrides if config_overrides is not None else dict(current.config_overrides),
         )
-        return await self.repository.update_sensor_assignment(sensor_id, assignment_id, draft)
 
-    async def delete_sensor_assignment(self, sensor_id: str, assignment_id: UUID) -> None:
-        assignment = await self.repository.get_sensor_assignment(sensor_id, assignment_id)
-        if assignment is None:
-            raise NotFoundError(f"Camera assignment {assignment_id} not found")
-        await self.repository.delete_sensor_assignment(sensor_id, assignment_id)
-
-    async def get_sensor_assignment_config(self, sensor_id: str, assignment_id: UUID) -> dict:
-        assignment = await self.repository.get_sensor_assignment(sensor_id, assignment_id)
-        if assignment is None:
-            raise NotFoundError(f"Camera assignment {assignment_id} not found")
-        solution, steps, capabilities = await self.get_solution(assignment.solution_id)
-        return resolve_solution_config(solution, steps, capabilities, assignment=assignment)
-
-    async def _refresh_solution_shas_for_capability(self, capability: Capability) -> None:
-        solution_ids = await self.repository.list_solution_ids_for_capability(capability.id)
-        for solution_id in solution_ids:
-            solution = await self.repository.get_solution(solution_id)
-            if solution is None:
-                continue
-            steps = await self.repository.get_solution_steps(solution_id)
-            capability_ids = [step.capability_id for step in steps if step.capability_id is not None]
-            capabilities = await self.repository.get_capabilities(capability_ids)
-            capabilities[capability.id] = capability
-            draft_steps = [
-                SolutionStepDraft(
-                    step_id=step.step_id,
-                    step_type=step.step_type,
-                    capability_id=step.capability_id,
-                    position=step.position,
-                    depends_on=list(step.depends_on),
-                    user_params=dict(step.user_params),
-                    internal_config=dict(step.internal_config),
-                )
-                for step in steps
-            ]
-            next_sha = self._compute_solution_sha(
-                SolutionDraft(
-                    name=solution.name,
-                    description=solution.description,
-                    user_params=solution.user_params,
-                    internal_config=solution.internal_config,
-                    version=solution.version,
-                ),
-                draft_steps,
-                capabilities,
-            )
-            if next_sha != solution.sha:
-                await self.repository.update_solution_sha(solution.id, next_sha)
-
-    def _compute_capability_sha(self, draft: AnyCapabilityDraft) -> str:
-        if isinstance(draft, ModelCapabilityDraft):
-            return compute_sha({
-                "kind": "model",
-                "capability_type": draft.capability_type,
-                "algorithm": draft.algorithm,
-                "model_name": draft.model_name,
-                "model_version": draft.model_version,
-                "confidence_threshold": draft.confidence_threshold,
-                "user_params": draft.user_params,
-            })
-        return compute_sha({
-            "kind": "classic_algorithm",
-            "capability_type": draft.capability_type,
-            "algorithm": draft.algorithm,
-            "user_params": draft.user_params,
-        })
-
-    def _compute_solution_sha(
+    async def delete_sensor_assignment(
         self,
-        draft: SolutionDraft,
-        steps: list[SolutionStepDraft],
-        capabilities: dict[UUID, Capability],
-    ) -> str:
-        serialized_steps = []
-        for step in sorted(steps, key=lambda item: item.position):
-            capability_sha = None
-            if step.capability_id is not None:
-                capability = capabilities.get(step.capability_id)
-                if capability is None:
-                    raise ValidationError(
-                        f"Capability {step.capability_id} not found for step {step.step_id}"
-                    )
-                capability_sha = capability.sha
-            serialized_steps.append({
-                "step_id": step.step_id,
-                "step_type": step.step_type,
-                "position": step.position,
-                "depends_on": step.depends_on,
-                "capability_sha": capability_sha,
-                "user_params": step.user_params,
-            })
-        return compute_sha({
-            "name": draft.name,
-            "steps": serialized_steps,
-            "user_params": draft.user_params,
-        })
-
-    async def _validate_steps(
-        self,
-        steps: list[SolutionStepDraft],
-        capabilities: dict[UUID, Capability],
+        sensor_id: str,
+        tool_action_id: UUID,
     ) -> None:
-        seen_ids: set[str] = set()
-        seen_positions: set[int] = set()
-        for index, step in enumerate(steps):
-            self._validate_step_capability_contract(step, capabilities)
-            if step.step_id in seen_ids:
-                raise ValidationError(f"Duplicate step_id {step.step_id!r}")
-            seen_ids.add(step.step_id)
-            if step.position in seen_positions:
-                raise ValidationError(f"Duplicate position {step.position}")
-            seen_positions.add(step.position)
-            if step.position != index:
-                raise ValidationError(
-                    "Steps must use contiguous zero-based positions matching request order"
-                )
-            unknown_dependencies = [dep for dep in step.depends_on if dep not in seen_ids]
-            if unknown_dependencies:
-                raise ValidationError(
-                    f"Step {step.step_id!r} depends on unknown prior steps: {unknown_dependencies}"
-                )
+        await self.get_sensor_assignment(sensor_id, tool_action_id)
+        await self.repository.delete_sensor_assignment(sensor_id, tool_action_id)
 
-    def _validate_step_capability_contract(
-        self,
-        step: SolutionStepDraft,
-        capabilities: dict[UUID, Capability],
-    ) -> None:
-        if step.step_type not in VALID_SOLUTION_STEP_TYPES:
+
+def _validate_draft(draft: ToolActionDraft) -> None:
+    if not draft.name:
+        raise ValidationError("name is required")
+    for step in draft.steps:
+        if step.step_type not in VALID_STEP_TYPES:
             raise ValidationError(
-                f"Step {step.step_id!r} has unsupported step_type={step.step_type!r}"
+                f"step {step.step_id!r}: invalid step_type {step.step_type!r}"
             )
-        if step.step_type in _INFERENCE_STEP_TYPES and step.capability_id is None:
-            raise ValidationError(
-                f"Step {step.step_id!r} with step_type={step.step_type!r} requires a capability_id"
-            )
-        if step.capability_id is None:
-            return
-        capability = capabilities.get(step.capability_id)
-        if capability is None:
-            raise ValidationError(
-                f"Step {step.step_id!r} references unknown capability {step.capability_id}"
-            )
-        if step.step_type in _INFERENCE_STEP_TYPES and not isinstance(capability, ModelCapability):
-            raise ValidationError(
-                f"Step {step.step_id!r} with step_type={step.step_type!r} requires a 'model' capability, got '{capability.kind}'"
-            )
-        if step.step_type not in _INFERENCE_STEP_TYPES and isinstance(capability, ModelCapability):
-            raise ValidationError(
-                f"Step {step.step_id!r} with step_type={step.step_type!r} must reference a 'classic_algorithm' capability, got 'model'"
-            )
+
+
+async def _resolve_capability_shas(
+    draft: ToolActionDraft,
+    client: CapabilitiesClient,
+) -> None:
+    for step in draft.steps:
+        if step.capability_id is not None and not step.capability_sha:
+            snap = await client.get(step.capability_id)
+            step.capability_sha = snap.sha

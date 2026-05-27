@@ -1,228 +1,224 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from capabilities_solutions_api.domain.models import (
-    Capability,
-    ClassicAlgorithmCapability,
-    ModelCapability,
+    ActionStep,
+    ActionStepDraft,
     SensorAssignment,
-    Solution,
-    SolutionStep,
+    SensorAssignmentDraft,
+    ToolAction,
+    ToolActionDraft,
+    ToolActionSLA,
 )
 
 
-class ModelCapabilityCreateRequest(BaseModel):
-    kind: Literal["model"] = "model"
-    capability_type: str
-    algorithm: str
-    model_name: str
-    model_version: str
-    confidence_threshold: float = 0.0
-    user_params: dict[str, Any] = Field(default_factory=dict)
-    internal_config: dict[str, Any] = Field(default_factory=dict)
+# ─── SLA ──────────────────────────────────────────────────────────────────────
 
+class ToolActionSLASchema(BaseModel):
+    delivery_mode: str
+    sla_seconds: int
+    notes: str = ""
 
-class ClassicAlgorithmCapabilityCreateRequest(BaseModel):
-    kind: Literal["classic_algorithm"]
-    capability_type: str
-    algorithm: str
-    user_params: dict[str, Any] = Field(default_factory=dict)
-    internal_config: dict[str, Any] = Field(default_factory=dict)
-
-
-CapabilityCreateRequest = ModelCapabilityCreateRequest | ClassicAlgorithmCapabilityCreateRequest
-
-
-class CapabilityUpdateRequest(BaseModel):
-    confidence_threshold: float | None = None
-    user_params: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_confidence_threshold(self) -> "CapabilityUpdateRequest":
-        if self.confidence_threshold is not None and not (0.0 <= self.confidence_threshold <= 1.0):
-            raise ValueError("confidence_threshold must be between 0.0 and 1.0")
-        return self
-
-
-class CapabilityResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    kind: str
-    capability_type: str
-    algorithm: str
-    user_params: dict[str, Any]
-    sha: str
-    created_at: datetime
-    updated_at: datetime
-    model_name: str | None = None
-    model_version: str | None = None
-    confidence_threshold: float | None = None
+    def to_domain(self) -> ToolActionSLA:
+        return ToolActionSLA(
+            delivery_mode=self.delivery_mode,
+            sla_seconds=self.sla_seconds,
+            notes=self.notes,
+        )
 
     @classmethod
-    def from_entity(cls, entity: Capability) -> "CapabilityResponse":
-        if isinstance(entity, ModelCapability):
-            return cls(
-                id=entity.id,
-                kind=entity.kind,
-                capability_type=entity.capability_type,
-                algorithm=entity.algorithm,
-                user_params=entity.user_params,
-                sha=entity.sha,
-                created_at=entity.created_at,
-                updated_at=entity.updated_at,
-                model_name=entity.model_name,
-                model_version=entity.model_version,
-                confidence_threshold=entity.confidence_threshold,
-            )
+    def from_domain(cls, sla: ToolActionSLA) -> "ToolActionSLASchema":
         return cls(
-            id=entity.id,
-            kind=entity.kind,
-            capability_type=entity.capability_type,
-            algorithm=entity.algorithm,
-            user_params=entity.user_params,
-            sha=entity.sha,
-            created_at=entity.created_at,
-            updated_at=entity.updated_at,
+            delivery_mode=sla.delivery_mode,
+            sla_seconds=sla.sla_seconds,
+            notes=sla.notes,
         )
 
 
-class CapabilitySchemaResponse(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+# ─── Step ─────────────────────────────────────────────────────────────────────
 
-    capability_id: UUID
-    json_schema: dict[str, Any] = Field(serialization_alias="schema")
-
-
-class CapabilityInternalConfigResponse(BaseModel):
-    capability_id: UUID
-    internal_config: dict[str, Any]
-
-
-class SolutionStepRequest(BaseModel):
+class ActionStepCreateSchema(BaseModel):
     step_id: str
     step_type: str
     capability_id: UUID | None = None
+    capability_sha: str = ""
+    position: int = 0
     depends_on: list[str] = Field(default_factory=list)
     user_params: dict[str, Any] = Field(default_factory=dict)
+    internal_config: dict[str, Any] = Field(default_factory=dict)
 
-
-class SolutionCreateRequest(BaseModel):
-    name: str
-    description: str = ""
-    user_params: dict[str, Any] = Field(default_factory=dict)
-    steps: list[SolutionStepRequest]
-
-
-class SolutionUpdateRequest(BaseModel):
-    description: str | None = None
-    user_params: dict[str, Any] | None = None
-    steps: list[SolutionStepRequest] | None = None
-
-
-class CapabilitySummaryResponse(BaseModel):
-    id: UUID
-    kind: str
-    capability_type: str
-    algorithm: str
-    sha: str
-    model_name: str | None = None
-    model_version: str | None = None
-    confidence_threshold: float | None = None
-
-    @classmethod
-    def from_entity(cls, entity: Capability) -> "CapabilitySummaryResponse":
-        if isinstance(entity, ModelCapability):
-            return cls(
-                id=entity.id,
-                kind=entity.kind,
-                capability_type=entity.capability_type,
-                algorithm=entity.algorithm,
-                sha=entity.sha,
-                model_name=entity.model_name,
-                model_version=entity.model_version,
-                confidence_threshold=entity.confidence_threshold,
-            )
-        return cls(
-            id=entity.id,
-            kind=entity.kind,
-            capability_type=entity.capability_type,
-            algorithm=entity.algorithm,
-            sha=entity.sha,
+    def to_draft(self) -> ActionStepDraft:
+        return ActionStepDraft(
+            step_id=self.step_id,
+            step_type=self.step_type,
+            capability_id=self.capability_id,
+            capability_sha=self.capability_sha,
+            position=self.position,
+            depends_on=list(self.depends_on),
+            user_params=dict(self.user_params),
+            internal_config=dict(self.internal_config),
         )
 
 
-class SolutionStepResponse(BaseModel):
+class ActionStepResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
+    tool_action_id: UUID
     step_id: str
     step_type: str
     capability_id: UUID | None
+    capability_sha: str
     position: int
     depends_on: list[str]
     user_params: dict[str, Any]
-    capability: CapabilitySummaryResponse | None = None
+    internal_config: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
 
     @classmethod
-    def from_entity(
-        cls,
-        entity: SolutionStep,
-        capability: Capability | None = None,
-    ) -> "SolutionStepResponse":
+    def from_domain(cls, step: ActionStep) -> "ActionStepResponse":
         return cls(
-            id=entity.id,
-            step_id=entity.step_id,
-            step_type=entity.step_type,
-            capability_id=entity.capability_id,
-            position=entity.position,
-            depends_on=list(entity.depends_on),
-            user_params=dict(entity.user_params),
-            capability=CapabilitySummaryResponse.from_entity(capability) if capability else None,
+            id=step.id,
+            tool_action_id=step.tool_action_id,
+            step_id=step.step_id,
+            step_type=step.step_type,
+            capability_id=step.capability_id,
+            capability_sha=step.capability_sha,
+            position=step.position,
+            depends_on=list(step.depends_on),
+            user_params=dict(step.user_params),
+            internal_config=dict(step.internal_config),
+            created_at=step.created_at,
         )
 
 
-class SolutionResponse(BaseModel):
+# ─── ToolAction create / update ───────────────────────────────────────────────
+
+class ToolActionCreateRequest(BaseModel):
+    name: str
+    display_name: str = ""
+    category: str = ""
+    status: str = "draft"
+    sensor_type: str = "camera"
+    supported_modes: list[str] = Field(default_factory=list)
+    setup: dict[str, Any] = Field(default_factory=dict)
+    output_schema_ref: str = ""
+    use_cases: str = ""
+    technical_overview: str = ""
+    limitations: str = ""
+    user_params: dict[str, Any] = Field(default_factory=dict)
+    internal_config: dict[str, Any] = Field(default_factory=dict)
+    slas: list[ToolActionSLASchema] = Field(default_factory=list)
+    steps: list[ActionStepCreateSchema] = Field(default_factory=list)
+
+    def to_draft(self) -> ToolActionDraft:
+        return ToolActionDraft(
+            name=self.name,
+            display_name=self.display_name,
+            category=self.category,
+            status=self.status,
+            sensor_type=self.sensor_type,
+            supported_modes=list(self.supported_modes),
+            setup=dict(self.setup),
+            output_schema_ref=self.output_schema_ref,
+            use_cases=self.use_cases,
+            technical_overview=self.technical_overview,
+            limitations=self.limitations,
+            user_params=dict(self.user_params),
+            internal_config=dict(self.internal_config),
+            slas=[s.to_domain() for s in self.slas],
+            steps=[s.to_draft() for s in self.steps],
+        )
+
+
+class ToolActionUpdateRequest(BaseModel):
+    display_name: str | None = None
+    category: str | None = None
+    status: str | None = None
+    sensor_type: str | None = None
+    supported_modes: list[str] | None = None
+    setup: dict[str, Any] | None = None
+    output_schema_ref: str | None = None
+    use_cases: str | None = None
+    technical_overview: str | None = None
+    limitations: str | None = None
+    user_params: dict[str, Any] | None = None
+    internal_config: dict[str, Any] | None = None
+    slas: list[ToolActionSLASchema] | None = None
+    steps: list[ActionStepCreateSchema] | None = None
+
+
+# ─── ToolAction response ──────────────────────────────────────────────────────
+
+class ToolActionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     name: str
-    description: str
-    user_params: dict[str, Any]
+    display_name: str
+    category: str
+    status: str
+    sensor_type: str
+    supported_modes: list[str]
+    setup: dict[str, Any]
+    output_schema_ref: str
+    use_cases: str
+    technical_overview: str
+    limitations: str
     version: int
     sha: str
+    user_params: dict[str, Any]
+    internal_config: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
-    steps: list[SolutionStepResponse]
+    slas: list[ToolActionSLASchema]
+    steps: list[ActionStepResponse]
 
     @classmethod
-    def from_entities(
-        cls,
-        solution: Solution,
-        steps: list[SolutionStep],
-        capabilities_by_id: dict[UUID, Capability],
-    ) -> "SolutionResponse":
+    def from_entity(cls, ta: ToolAction) -> "ToolActionResponse":
         return cls(
-            id=solution.id,
-            name=solution.name,
-            description=solution.description,
-            user_params=dict(solution.user_params),
-            version=solution.version,
-            sha=solution.sha,
-            created_at=solution.created_at,
-            updated_at=solution.updated_at,
-            steps=[
-                SolutionStepResponse.from_entity(step, capabilities_by_id.get(step.capability_id))
-                for step in sorted(steps, key=lambda item: item.position)
-            ],
+            id=ta.id,
+            name=ta.name,
+            display_name=ta.display_name,
+            category=ta.category,
+            status=ta.status,
+            sensor_type=ta.sensor_type,
+            supported_modes=list(ta.supported_modes),
+            setup=dict(ta.setup),
+            output_schema_ref=ta.output_schema_ref,
+            use_cases=ta.use_cases,
+            technical_overview=ta.technical_overview,
+            limitations=ta.limitations,
+            version=ta.version,
+            sha=ta.sha,
+            user_params=dict(ta.user_params),
+            internal_config=dict(ta.internal_config),
+            created_at=ta.created_at,
+            updated_at=ta.updated_at,
+            slas=[ToolActionSLASchema.from_domain(s) for s in ta.slas],
+            steps=[ActionStepResponse.from_domain(s) for s in ta.steps],
         )
 
 
+# ─── SensorAssignment ─────────────────────────────────────────────────────────
+
 class SensorAssignmentCreateRequest(BaseModel):
-    solution_id: UUID
+    tool_action_id: UUID
     is_active: bool = True
     config_overrides: dict[str, Any] = Field(default_factory=dict)
+
+    def to_draft(self, sensor_id: str) -> SensorAssignmentDraft:
+        return SensorAssignmentDraft(
+            sensor_id=sensor_id,
+            tool_action_id=self.tool_action_id,
+            is_active=self.is_active,
+            config_overrides=dict(self.config_overrides),
+        )
 
 
 class SensorAssignmentUpdateRequest(BaseModel):
@@ -231,40 +227,32 @@ class SensorAssignmentUpdateRequest(BaseModel):
 
 
 class SensorAssignmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     sensor_id: str
-    solution_id: UUID
-    solution_name: str
+    tool_action_id: UUID
     is_active: bool
     config_overrides: dict[str, Any]
-    solution_sha: str
-    current_solution_sha: str
-    drifted: bool
+    tool_action_sha: str
     created_at: datetime
     updated_at: datetime
 
     @classmethod
-    def from_entities(
-        cls,
-        assignment: SensorAssignment,
-        solution: Solution,
-        *,
-        drifted: bool,
-    ) -> "SensorAssignmentResponse":
+    def from_entity(cls, sa: SensorAssignment) -> "SensorAssignmentResponse":
         return cls(
-            id=assignment.id,
-            sensor_id=assignment.sensor_id,
-            solution_id=assignment.solution_id,
-            solution_name=solution.name,
-            is_active=assignment.is_active,
-            config_overrides=dict(assignment.config_overrides),
-            solution_sha=assignment.solution_sha,
-            current_solution_sha=solution.sha,
-            drifted=drifted,
-            created_at=assignment.created_at,
-            updated_at=assignment.updated_at,
+            id=sa.id,
+            sensor_id=sa.sensor_id,
+            tool_action_id=sa.tool_action_id,
+            is_active=sa.is_active,
+            config_overrides=dict(sa.config_overrides),
+            tool_action_sha=sa.tool_action_sha,
+            created_at=sa.created_at,
+            updated_at=sa.updated_at,
         )
 
+
+# ─── Health ───────────────────────────────────────────────────────────────────
 
 class HealthResponse(BaseModel):
     status: str
