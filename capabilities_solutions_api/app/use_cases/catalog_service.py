@@ -149,8 +149,15 @@ class ToolActionCatalogService:
         }
 
     async def get_pricing(self, tool_action_id: UUID) -> ToolActionPricing:
+        """Aggregate (sum) the per-step capability costs into a single total.
+
+        Every numeric field is a straight sum across resolved steps. ``hardware``
+        is a string so it accumulates as a comma-separated dedup list preserving
+        the order each unique value first appears.
+        """
         ta = await self.get_tool_action(tool_action_id)
         totals = InferenceCost()
+        hardware_seen: list[str] = []
 
         for step in ta.steps:
             if step.capability_id is None:
@@ -162,14 +169,17 @@ class ToolActionCatalogService:
             except NotFoundError:
                 continue
             cost = resolved.cost
-            if cost:
-                totals = InferenceCost(
-                    hardware=totals.hardware or cost.hardware,
-                    rate_per_hour_usd=totals.rate_per_hour_usd + cost.rate_per_hour_usd,
-                    inference_time_ms_per_frame=totals.inference_time_ms_per_frame + cost.inference_time_ms_per_frame,
-                    cost_per_frame_usd=totals.cost_per_frame_usd + cost.cost_per_frame_usd,
-                    cost_per_camera_day_usd_at_15fps=totals.cost_per_camera_day_usd_at_15fps + cost.cost_per_camera_day_usd_at_15fps,
-                )
+            if not cost:
+                continue
+            if cost.hardware and cost.hardware not in hardware_seen:
+                hardware_seen.append(cost.hardware)
+            totals = InferenceCost(
+                hardware=", ".join(hardware_seen),
+                rate_per_hour_usd=totals.rate_per_hour_usd + cost.rate_per_hour_usd,
+                inference_time_ms_per_frame=totals.inference_time_ms_per_frame + cost.inference_time_ms_per_frame,
+                cost_per_frame_usd=totals.cost_per_frame_usd + cost.cost_per_frame_usd,
+                cost_per_camera_day_usd_at_15fps=totals.cost_per_camera_day_usd_at_15fps + cost.cost_per_camera_day_usd_at_15fps,
+            )
 
         return ToolActionPricing(tool_action_id=tool_action_id, totals=totals)
 
