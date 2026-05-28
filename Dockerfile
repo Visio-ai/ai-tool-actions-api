@@ -28,7 +28,10 @@ RUN uv sync
 COPY capabilities_solutions_api/ capabilities_solutions_api/
 COPY tests/ tests/
 
-RUN uv run pytest tests/unit/
+# tests/ has no __init__.py, so pytest's prepend importmode would put tests/unit
+# on sys.path instead of the project root; PYTHONPATH=/app makes the top-level
+# package importable during collection.
+RUN PYTHONPATH=/app uv run pytest tests/unit/
 
 RUN uv sync --no-dev
 
