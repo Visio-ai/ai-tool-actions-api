@@ -1,0 +1,1340 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tool Actions API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tool-actions": {
+      "get": {
+        "summary": "List Tool Actions",
+        "operationId": "list_tool_actions_tool_actions_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "sensor_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sensor Type"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ToolActionResponse"
+                  },
+                  "title": "Response List Tool Actions Tool Actions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Tool Action",
+        "operationId": "create_tool_action_tool_actions_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolActionCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tool-actions/{tool_action_id}": {
+      "get": {
+        "summary": "Get Tool Action",
+        "operationId": "get_tool_action_tool_actions__tool_action_id__get",
+        "parameters": [
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update Tool Action",
+        "operationId": "update_tool_action_tool_actions__tool_action_id__patch",
+        "parameters": [
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolActionUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Tool Action",
+        "operationId": "delete_tool_action_tool_actions__tool_action_id__delete",
+        "parameters": [
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tool-actions/{tool_action_id}/config": {
+      "get": {
+        "summary": "Get Tool Action Config",
+        "operationId": "get_tool_action_config_tool_actions__tool_action_id__config_get",
+        "parameters": [
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Tool Action Config Tool Actions  Tool Action Id  Config Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tool-actions/{tool_action_id}/pricing": {
+      "get": {
+        "summary": "Get Tool Action Pricing",
+        "operationId": "get_tool_action_pricing_tool_actions__tool_action_id__pricing_get",
+        "parameters": [
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Tool Action Pricing Tool Actions  Tool Action Id  Pricing Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/tool-actions/by-name/{name}": {
+      "get": {
+        "summary": "Get Tool Action By Name",
+        "operationId": "get_tool_action_by_name_internal_tool_actions_by_name__name__get",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolActionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sensors/{sensor_id}/tool-actions": {
+      "get": {
+        "summary": "List Sensor Assignments",
+        "operationId": "list_sensor_assignments_sensors__sensor_id__tool_actions_get",
+        "parameters": [
+          {
+            "name": "sensor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sensor Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SensorAssignmentResponse"
+                  },
+                  "title": "Response List Sensor Assignments Sensors  Sensor Id  Tool Actions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Sensor Assignment",
+        "operationId": "create_sensor_assignment_sensors__sensor_id__tool_actions_post",
+        "parameters": [
+          {
+            "name": "sensor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sensor Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorAssignmentCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorAssignmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sensors/{sensor_id}/tool-actions/{tool_action_id}": {
+      "get": {
+        "summary": "Get Sensor Assignment",
+        "operationId": "get_sensor_assignment_sensors__sensor_id__tool_actions__tool_action_id__get",
+        "parameters": [
+          {
+            "name": "sensor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sensor Id"
+            }
+          },
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorAssignmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update Sensor Assignment",
+        "operationId": "update_sensor_assignment_sensors__sensor_id__tool_actions__tool_action_id__patch",
+        "parameters": [
+          {
+            "name": "sensor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sensor Id"
+            }
+          },
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SensorAssignmentUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SensorAssignmentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Sensor Assignment",
+        "operationId": "delete_sensor_assignment_sensors__sensor_id__tool_actions__tool_action_id__delete",
+        "parameters": [
+          {
+            "name": "sensor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sensor Id"
+            }
+          },
+          {
+            "name": "tool_action_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Tool Action Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActionStepCreateSchema": {
+        "properties": {
+          "step_id": {
+            "type": "string",
+            "title": "Step Id"
+          },
+          "step_type": {
+            "type": "string",
+            "title": "Step Type"
+          },
+          "capability_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability Id"
+          },
+          "capability_sha": {
+            "type": "string",
+            "title": "Capability Sha",
+            "default": ""
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position",
+            "default": 0
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Depends On"
+          },
+          "user_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "User Params"
+          },
+          "internal_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Internal Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "step_id",
+          "step_type"
+        ],
+        "title": "ActionStepCreateSchema"
+      },
+      "ActionStepResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "tool_action_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Tool Action Id"
+          },
+          "step_id": {
+            "type": "string",
+            "title": "Step Id"
+          },
+          "step_type": {
+            "type": "string",
+            "title": "Step Type"
+          },
+          "capability_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability Id"
+          },
+          "capability_sha": {
+            "type": "string",
+            "title": "Capability Sha"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Depends On"
+          },
+          "user_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "User Params"
+          },
+          "internal_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Internal Config"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "tool_action_id",
+          "step_id",
+          "step_type",
+          "capability_id",
+          "capability_sha",
+          "position",
+          "depends_on",
+          "user_params",
+          "created_at"
+        ],
+        "title": "ActionStepResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse"
+      },
+      "SensorAssignmentCreateRequest": {
+        "properties": {
+          "tool_action_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Tool Action Id"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "config_overrides": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config Overrides"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tool_action_id"
+        ],
+        "title": "SensorAssignmentCreateRequest"
+      },
+      "SensorAssignmentResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "sensor_id": {
+            "type": "string",
+            "title": "Sensor Id"
+          },
+          "tool_action_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Tool Action Id"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "config_overrides": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config Overrides"
+          },
+          "tool_action_sha": {
+            "type": "string",
+            "title": "Tool Action Sha"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sensor_id",
+          "tool_action_id",
+          "is_active",
+          "config_overrides",
+          "tool_action_sha",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "SensorAssignmentResponse"
+      },
+      "SensorAssignmentUpdateRequest": {
+        "properties": {
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "config_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Overrides"
+          }
+        },
+        "type": "object",
+        "title": "SensorAssignmentUpdateRequest"
+      },
+      "ToolActionCreateRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": ""
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "draft"
+          },
+          "sensor_type": {
+            "type": "string",
+            "title": "Sensor Type",
+            "default": "camera"
+          },
+          "supported_modes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Modes"
+          },
+          "setup": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Setup"
+          },
+          "output_schema_ref": {
+            "type": "string",
+            "title": "Output Schema Ref",
+            "default": ""
+          },
+          "use_cases": {
+            "type": "string",
+            "title": "Use Cases",
+            "default": ""
+          },
+          "technical_overview": {
+            "type": "string",
+            "title": "Technical Overview",
+            "default": ""
+          },
+          "limitations": {
+            "type": "string",
+            "title": "Limitations",
+            "default": ""
+          },
+          "user_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "User Params"
+          },
+          "internal_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Internal Config"
+          },
+          "slas": {
+            "items": {
+              "$ref": "#/components/schemas/ToolActionSLASchema"
+            },
+            "type": "array",
+            "title": "Slas"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ActionStepCreateSchema"
+            },
+            "type": "array",
+            "title": "Steps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ToolActionCreateRequest"
+      },
+      "ToolActionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "sensor_type": {
+            "type": "string",
+            "title": "Sensor Type"
+          },
+          "supported_modes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Modes"
+          },
+          "setup": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Setup"
+          },
+          "output_schema_ref": {
+            "type": "string",
+            "title": "Output Schema Ref"
+          },
+          "use_cases": {
+            "type": "string",
+            "title": "Use Cases"
+          },
+          "technical_overview": {
+            "type": "string",
+            "title": "Technical Overview"
+          },
+          "limitations": {
+            "type": "string",
+            "title": "Limitations"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "sha": {
+            "type": "string",
+            "title": "Sha"
+          },
+          "user_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "User Params"
+          },
+          "internal_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Internal Config"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "slas": {
+            "items": {
+              "$ref": "#/components/schemas/ToolActionSLASchema"
+            },
+            "type": "array",
+            "title": "Slas"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ActionStepResponse"
+            },
+            "type": "array",
+            "title": "Steps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "display_name",
+          "category",
+          "status",
+          "sensor_type",
+          "supported_modes",
+          "setup",
+          "output_schema_ref",
+          "use_cases",
+          "technical_overview",
+          "limitations",
+          "version",
+          "sha",
+          "user_params",
+          "created_at",
+          "updated_at",
+          "slas",
+          "steps"
+        ],
+        "title": "ToolActionResponse"
+      },
+      "ToolActionSLASchema": {
+        "properties": {
+          "delivery_mode": {
+            "type": "string",
+            "title": "Delivery Mode"
+          },
+          "sla_seconds": {
+            "type": "integer",
+            "title": "Sla Seconds"
+          },
+          "notes": {
+            "type": "string",
+            "title": "Notes",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "delivery_mode",
+          "sla_seconds"
+        ],
+        "title": "ToolActionSLASchema"
+      },
+      "ToolActionUpdateRequest": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "sensor_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Type"
+          },
+          "supported_modes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supported Modes"
+          },
+          "setup": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Setup"
+          },
+          "output_schema_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Schema Ref"
+          },
+          "use_cases": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Cases"
+          },
+          "technical_overview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Technical Overview"
+          },
+          "limitations": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limitations"
+          },
+          "user_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Params"
+          },
+          "internal_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Internal Config"
+          },
+          "slas": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ToolActionSLASchema"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slas"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ActionStepCreateSchema"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          }
+        },
+        "type": "object",
+        "title": "ToolActionUpdateRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
