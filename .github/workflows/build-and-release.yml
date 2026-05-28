@@ -1,0 +1,22 @@
+name: Build And Release
+
+on:
+  push:
+    branches:
+      - rc
+      - staging
+      - main
+      - master
+
+jobs:
+  build:
+    uses: Visio-ai/workflows/.github/workflows/python_build-and-push.yml@main
+    with:
+      SERVICE_NAME: ai-tool-actions-api
+    secrets:
+      VISIO_SSH_KEY: ${{ secrets.VISIO_SSH_KEY }}
+      HARBOR_USER: ${{ secrets.HARBOR_USER }}
+      HARBOR_PASSWORD: ${{ secrets.HARBOR_PASSWORD }}
+      DISCORD_RC: ${{ secrets.DISCORD_RC }}
+      DISCORD_PROD: ${{ secrets.DISCORD_PROD }}
+      DISCORD_STAGING: ${{ secrets.DISCORD_STAGING }}
