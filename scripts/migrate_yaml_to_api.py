@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import os
 import sys
@@ -110,35 +109,6 @@ _ALGORITHM_TOKENS = (
     "osnet",
     "tfrec",
 )
-
-
-# ─── sha helpers (mirror each API's canonical-JSON sha) ─────────────────────────
-
-def _compute_sha(data: dict) -> str:
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
-
-
-def _model_capability_sha(capability_type: str, algorithm: str, model_name: str,
-                          model_version: str, confidence_threshold: float) -> str:
-    # Mirrors capabilities_api.app.use_cases.catalog_service._compute_sha (model).
-    return _compute_sha({
-        "kind": "model",
-        "capability_type": capability_type,
-        "algorithm": algorithm,
-        "model_name": model_name,
-        "model_version": model_version,
-        "confidence_threshold": confidence_threshold,
-    })
-
-
-def _classic_capability_sha(capability_type: str, algorithm: str) -> str:
-    # Mirrors capabilities_api.app.use_cases.catalog_service._compute_sha (classic).
-    return _compute_sha({
-        "kind": "classic_algorithm",
-        "capability_type": capability_type,
-        "algorithm": algorithm,
-    })
 
 
 # ─── Inference helpers ──────────────────────────────────────────────────────────
@@ -229,44 +199,86 @@ def _enrichment(detection: dict | None) -> tuple[str | None, dict, dict]:
 
 # ─── HTTP: capabilities-api (upsert by sha) ─────────────────────────────────────
 
+def _identity_key(payload: dict) -> tuple:
+    """Stable in-run dedup key from a capability payload's identity fields.
+
+    The capability sha is owned by the server (capabilities_api computes it,
+    including ``config``); the script must NOT recompute it or the step's
+    ``capability_sha`` drifts from the real capability. This key is only for
+    deduping POSTs within a single run -- the authoritative sha always comes
+    back in the POST/GET response body.
+    """
+    return (
+        payload["kind"],
+        payload["capability_type"],
+        payload["algorithm"],
+        payload.get("model_name"),
+        payload.get("model_version"),
+        payload.get("confidence_threshold"),
+    )
+
+
 class CapabilitiesApi:
     def __init__(self, client: httpx.AsyncClient, base_url: str, dry_run: bool) -> None:
         self._client = client
         self._base = base_url.rstrip("/")
         self._dry = dry_run
-        self._sha_cache: dict[str, str] = {}  # sha -> capability_id
+        self._cache: dict[tuple, tuple[str, str]] = {}  # identity -> (id, sha)
 
-    async def _get_id_by_sha(self, sha: str) -> str | None:
-        resp = await self._client.get(f"{self._base}/internal/capabilities/by-sha/{sha}")
-        if resp.status_code == 404:
-            return None
+    async def _find_existing(self, payload: dict) -> tuple[str, str] | None:
+        """Look up an existing capability by identity via the list endpoint.
+
+        Filters server-side by kind/capability_type/algorithm, then matches
+        model_name/model_version/confidence_threshold client-side (the list
+        endpoint does not filter on those).
+        """
+        params = {
+            "kind": payload["kind"],
+            "capability_type": payload["capability_type"],
+            "algorithm": payload["algorithm"],
+        }
+        resp = await self._client.get(f"{self._base}/capabilities", params=params)
         resp.raise_for_status()
-        return resp.json()["id"]
+        for cap in resp.json():
+            if (
+                cap.get("model_name") == payload.get("model_name")
+                and cap.get("model_version") == payload.get("model_version")
+                and cap.get("confidence_threshold") == payload.get("confidence_threshold")
+            ):
+                return cap["id"], cap["sha"]
+        return None
 
-    async def ensure(self, sha: str, payload: dict) -> tuple[str, str]:
-        """Create the capability if absent; return (capability_id, sha)."""
-        if sha in self._sha_cache:
-            return self._sha_cache[sha], sha
+    async def ensure(self, payload: dict) -> tuple[str, str]:
+        """Create the capability if absent; return (capability_id, server_sha).
+
+        The returned sha is always the one the server computed, never a local
+        guess -- this is what keeps the tool-action step's capability_sha in
+        sync with the real capability.
+        """
+        key = _identity_key(payload)
+        if key in self._cache:
+            return self._cache[key]
         if self._dry:
-            cap_id = f"<dry:{sha}>"
-            self._sha_cache[sha] = cap_id
-            return cap_id, sha
-        existing = await self._get_id_by_sha(sha)
+            result = (f"<dry:{key[2]}>", "<dry:sha>")
+            self._cache[key] = result
+            return result
+        existing = await self._find_existing(payload)
         if existing is not None:
-            self._sha_cache[sha] = existing
-            return existing, sha
+            self._cache[key] = existing
+            return existing
         resp = await self._client.post(f"{self._base}/capabilities", json=payload)
         if resp.status_code == 409:
-            # Lost a race or sha already present; fetch it.
-            existing = await self._get_id_by_sha(sha)
+            # Lost a race or already present; re-fetch by identity.
+            existing = await self._find_existing(payload)
             if existing is None:
                 resp.raise_for_status()
-            self._sha_cache[sha] = existing  # type: ignore[assignment]
-            return existing, sha  # type: ignore[return-value]
+            self._cache[key] = existing  # type: ignore[assignment]
+            return existing  # type: ignore[return-value]
         resp.raise_for_status()
-        cap_id = resp.json()["id"]
-        self._sha_cache[sha] = cap_id
-        return cap_id, sha
+        body = resp.json()
+        result = (body["id"], body["sha"])
+        self._cache[key] = result
+        return result
 
 
 # ─── HTTP: solutions-api (upsert by name) ───────────────────────────────────────
@@ -303,8 +315,8 @@ def _build_step(step: StepConfig, position: int,
                 detections: dict[str, dict]) -> tuple[dict, dict | None]:
     """Return (step_payload, capability_payload_or_None).
 
-    The capability payload carries a synthetic ``_sha`` key used for the upsert
-    lookup; it is stripped before POSTing.
+    The capability payload carries no sha: the server owns sha computation, so
+    the step's ``capability_sha`` is filled from the API response, not guessed.
     """
     internal_config = _step_internal_config(step)
     step_payload: dict[str, Any] = {
@@ -325,7 +337,6 @@ def _build_step(step: StepConfig, position: int,
             capability_type = _infer_capability_type(step)
             algorithm = _infer_algorithm(step)
             cap_payload = {
-                "_sha": _classic_capability_sha(capability_type, algorithm),
                 "kind": "classic_algorithm",
                 "capability_type": capability_type,
                 "algorithm": algorithm,
@@ -337,16 +348,17 @@ def _build_step(step: StepConfig, position: int,
 
         case "async_inference" | "inference":
             step_payload["step_type"] = "model"
-            capability_type = _infer_capability_type(step)
-            algorithm = _infer_algorithm(step)
             model_name = step.model_name
             model_version = step.model_version or "0.0.0"
             confidence = step.confidence_threshold
-            weights_url, config, infra_config = _enrichment(detections.get(model_name))
+            detection = detections.get(model_name)
+            # The detection manifest is the source of truth for capability_type
+            # and algorithm; fall back to name-token inference only when no
+            # manifest matches the model_name.
+            capability_type = (detection or {}).get("capability") or _infer_capability_type(step)
+            algorithm = (detection or {}).get("algorithm") or _infer_algorithm(step)
+            weights_url, config, infra_config = _enrichment(detection)
             cap_payload = {
-                "_sha": _model_capability_sha(
-                    capability_type, algorithm, model_name, model_version, confidence
-                ),
                 "kind": "model",
                 "capability_type": capability_type,
                 "algorithm": algorithm,
@@ -388,8 +400,7 @@ async def run(args: argparse.Namespace) -> None:
             for position, step in enumerate(config.resolve_steps()):
                 step_payload, cap_payload = _build_step(step, position, detections)
                 if cap_payload is not None:
-                    sha = cap_payload.pop("_sha")
-                    cap_id, cap_sha = await caps_api.ensure(sha, cap_payload)
+                    cap_id, cap_sha = await caps_api.ensure(cap_payload)
                     step_payload["capability_id"] = cap_id
                     step_payload["capability_sha"] = cap_sha
                 step_payloads.append(step_payload)
