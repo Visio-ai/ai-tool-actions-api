@@ -6,11 +6,15 @@ from uuid import uuid4, UUID
 import pytest
 
 from capabilities_solutions_api.adapters.capabilities_client import CapabilitySnapshot
-from capabilities_solutions_api.app.use_cases.catalog_service import ToolActionCatalogService
+from capabilities_solutions_api.app.use_cases.catalog_service import (
+    ToolActionCatalogService,
+    _resolve_step_capability,
+)
 from capabilities_solutions_api.domain.errors import ConflictError, NotFoundError, ValidationError
 from capabilities_solutions_api.domain.models import (
     ActionStep,
     ActionStepDraft,
+    InferenceCost,
     SensorAssignment,
     ToolAction,
     ToolActionDraft,
@@ -184,12 +188,106 @@ async def test_get_pricing_aggregates_by_type():
         id=cap_id,
         kind="model",
         sha="sha1",
-        cost={"cost_type": "per_frame", "unit_cost_usd": 0.000002},
+        cost=_cost(),
+        status="active",
     )
     caps_client = AsyncMock()
     caps_client.get.return_value = snap
 
     svc = _make_service(repo=repo, caps_client=caps_client)
     pricing = await svc.get_pricing(ta.id)
-    assert pricing["totals_by_type"]["per_frame"] == pytest.approx(0.000002)
-    assert len(pricing["breakdown"]) == 1
+    assert pricing.tool_action_id == ta.id
+    assert pricing.totals.cost_per_frame_usd == pytest.approx(0.001)
+    assert pricing.totals.hardware == "T4"
+
+
+def _cost() -> InferenceCost:
+    return InferenceCost(
+        hardware="T4",
+        rate_per_hour_usd=0.5,
+        inference_time_ms_per_frame=10.0,
+        cost_per_frame_usd=0.001,
+        cost_per_camera_day_usd_at_15fps=2.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_non_blueprint_returns_self():
+    cap_id = uuid4()
+    cost = _cost()
+    client = AsyncMock()
+    client.get.return_value = CapabilitySnapshot(
+        id=cap_id, kind="model", sha="sha_model", cost=cost, status="active"
+    )
+
+    resolved = await _resolve_step_capability(cap_id, client)
+
+    assert resolved.source == "self"
+    assert resolved.capability_id == cap_id
+    assert resolved.kind == "model"
+    assert resolved.sha == "sha_model"
+    assert resolved.cost is cost
+    client.list_trained_for_blueprint.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_blueprint_prefers_trained_model():
+    bp_id, trained_id = uuid4(), uuid4()
+    trained_cost = _cost()
+    client = AsyncMock()
+    client.get.return_value = CapabilitySnapshot(
+        id=bp_id, kind="model_blueprint", sha="sha_bp", cost=None,
+        default_foundation_id=uuid4(),
+    )
+    client.list_trained_for_blueprint.return_value = [
+        CapabilitySnapshot(id=trained_id, kind="model", sha="sha_trained", cost=trained_cost, status="active")
+    ]
+
+    resolved = await _resolve_step_capability(bp_id, client)
+
+    assert resolved.source == "trained_model"
+    assert resolved.capability_id == trained_id
+    assert resolved.sha == "sha_trained"
+    assert resolved.cost is trained_cost
+    client.list_trained_for_blueprint.assert_awaited_once_with(bp_id, status="active")
+    # default foundation must not be fetched when a trained model exists
+    client.get.assert_awaited_once_with(bp_id)
+
+
+@pytest.mark.asyncio
+async def test_resolve_blueprint_falls_back_to_default_foundation():
+    bp_id, foundation_id = uuid4(), uuid4()
+    foundation_cost = _cost()
+    bp_snap = CapabilitySnapshot(
+        id=bp_id, kind="model_blueprint", sha="sha_bp", cost=None,
+        default_foundation_id=foundation_id,
+    )
+    foundation_snap = CapabilitySnapshot(
+        id=foundation_id, kind="foundation_model", sha="sha_fnd", cost=foundation_cost, status="active"
+    )
+    client = AsyncMock()
+    client.get.side_effect = [bp_snap, foundation_snap]
+    client.list_trained_for_blueprint.return_value = []
+
+    resolved = await _resolve_step_capability(bp_id, client)
+
+    assert resolved.source == "default_foundation"
+    assert resolved.capability_id == foundation_id
+    assert resolved.sha == "sha_fnd"
+    assert resolved.cost is foundation_cost
+
+
+@pytest.mark.asyncio
+async def test_resolve_blueprint_unresolved_without_trained_or_foundation():
+    bp_id = uuid4()
+    client = AsyncMock()
+    client.get.return_value = CapabilitySnapshot(
+        id=bp_id, kind="model_blueprint", sha="sha_bp", cost=None, default_foundation_id=None
+    )
+    client.list_trained_for_blueprint.return_value = []
+
+    resolved = await _resolve_step_capability(bp_id, client)
+
+    assert resolved.source == "unresolved"
+    assert resolved.capability_id == bp_id
+    assert resolved.sha == "sha_bp"

@@ -145,9 +145,10 @@ async def test_get_pricing(client: AsyncClient, mock_capabilities_client) -> Non
     pricing_resp = await client.get(f"/tool-actions/{ta_id}/pricing")
     assert pricing_resp.status_code == 200
     pricing = pricing_resp.json()
-    assert "breakdown" in pricing
-    assert "totals_by_type" in pricing
-    assert "per_frame" in pricing["totals_by_type"]
+    assert pricing["tool_action_id"] == ta_id
+    # single model step -> totals equal the mocked capability's inference cost
+    assert pricing["totals"]["cost_per_frame_usd"] == pytest.approx(0.000002)
+    assert pricing["totals"]["hardware"] == "T4"
 
 
 @pytest.mark.asyncio

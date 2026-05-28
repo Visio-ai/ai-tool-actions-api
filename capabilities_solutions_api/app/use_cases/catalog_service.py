@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from capabilities_solutions_api.adapters.capabilities_client import CapabilitiesClient
@@ -17,6 +18,39 @@ from capabilities_solutions_api.domain.sha import compute_tool_action_sha
 
 VALID_STATUSES = {"draft", "active", "deprecated"}
 VALID_STEP_TYPES = {"model", "classic_algorithm", "service"}
+
+
+@dataclass(slots=True)
+class ResolvedStep:
+    """Effective capability a blueprint-backed step runs as at instantiation time."""
+    capability_id: UUID | None
+    kind: str | None
+    sha: str
+    source: str  # "self" | "trained_model" | "default_foundation" | "unresolved"
+    cost: object | None  # InferenceCost | None
+
+
+async def _resolve_step_capability(
+    capability_id: UUID,
+    client: CapabilitiesClient,
+) -> ResolvedStep:
+    """For a blueprint step, fall back to its latest trained model, then its default foundation."""
+    snap = await client.get(capability_id)
+    if snap.kind != "model_blueprint":
+        return ResolvedStep(snap.id, snap.kind, snap.sha, "self", snap.cost)
+
+    trained = await client.list_trained_for_blueprint(snap.id, status="active")
+    if trained:
+        chosen = trained[0]
+        return ResolvedStep(chosen.id, chosen.kind, chosen.sha, "trained_model", chosen.cost)
+
+    if snap.default_foundation_id is not None:
+        foundation = await client.get(snap.default_foundation_id)
+        return ResolvedStep(
+            foundation.id, foundation.kind, foundation.sha, "default_foundation", foundation.cost
+        )
+
+    return ResolvedStep(snap.id, snap.kind, snap.sha, "unresolved", snap.cost)
 
 
 class ToolActionCatalogService:
@@ -74,6 +108,33 @@ class ToolActionCatalogService:
 
     async def get_config(self, tool_action_id: UUID) -> dict:
         ta = await self.get_tool_action(tool_action_id)
+        steps = []
+        for s in ta.steps:
+            step = {
+                "step_id": s.step_id,
+                "step_type": s.step_type,
+                "capability_id": str(s.capability_id) if s.capability_id else None,
+                "capability_sha": s.capability_sha,
+                "position": s.position,
+                "depends_on": s.depends_on,
+                "user_params": s.user_params,
+                "internal_config": s.internal_config,
+            }
+            if s.capability_id is not None:
+                try:
+                    resolved = await _resolve_step_capability(
+                        s.capability_id, self.capabilities_client
+                    )
+                except NotFoundError:
+                    resolved = None
+                if resolved is not None:
+                    step["resolved_capability_id"] = (
+                        str(resolved.capability_id) if resolved.capability_id else None
+                    )
+                    step["resolved_capability_kind"] = resolved.kind
+                    step["resolved_capability_sha"] = resolved.sha
+                    step["resolution_source"] = resolved.source
+            steps.append(step)
         return {
             "tool_action_id": str(tool_action_id),
             "name": ta.name,
@@ -84,40 +145,41 @@ class ToolActionCatalogService:
             "output_schema_ref": ta.output_schema_ref,
             "user_params": ta.user_params,
             "internal_config": ta.internal_config,
-            "steps": [
-                {
-                    "step_id": s.step_id,
-                    "step_type": s.step_type,
-                    "capability_id": str(s.capability_id) if s.capability_id else None,
-                    "capability_sha": s.capability_sha,
-                    "position": s.position,
-                    "depends_on": s.depends_on,
-                    "user_params": s.user_params,
-                    "internal_config": s.internal_config,
-                }
-                for s in ta.steps
-            ],
+            "steps": steps,
         }
 
     async def get_pricing(self, tool_action_id: UUID) -> ToolActionPricing:
+        """Aggregate (sum) the per-step capability costs into a single total.
+
+        Every numeric field is a straight sum across resolved steps. ``hardware``
+        is a string so it accumulates as a comma-separated dedup list preserving
+        the order each unique value first appears.
+        """
         ta = await self.get_tool_action(tool_action_id)
         totals = InferenceCost()
+        hardware_seen: list[str] = []
 
         for step in ta.steps:
             if step.capability_id is None:
                 continue
             try:
-                snap = await self.capabilities_client.get(step.capability_id)
+                resolved = await _resolve_step_capability(
+                    step.capability_id, self.capabilities_client
+                )
             except NotFoundError:
                 continue
-            if snap.cost:
-                totals = InferenceCost(
-                    hardware=totals.hardware or snap.cost.hardware,
-                    rate_per_hour_usd=totals.rate_per_hour_usd + snap.cost.rate_per_hour_usd,
-                    inference_time_ms_per_frame=totals.inference_time_ms_per_frame + snap.cost.inference_time_ms_per_frame,
-                    cost_per_frame_usd=totals.cost_per_frame_usd + snap.cost.cost_per_frame_usd,
-                    cost_per_camera_day_usd_at_15fps=totals.cost_per_camera_day_usd_at_15fps + snap.cost.cost_per_camera_day_usd_at_15fps,
-                )
+            cost = resolved.cost
+            if not cost:
+                continue
+            if cost.hardware and cost.hardware not in hardware_seen:
+                hardware_seen.append(cost.hardware)
+            totals = InferenceCost(
+                hardware=", ".join(hardware_seen),
+                rate_per_hour_usd=totals.rate_per_hour_usd + cost.rate_per_hour_usd,
+                inference_time_ms_per_frame=totals.inference_time_ms_per_frame + cost.inference_time_ms_per_frame,
+                cost_per_frame_usd=totals.cost_per_frame_usd + cost.cost_per_frame_usd,
+                cost_per_camera_day_usd_at_15fps=totals.cost_per_camera_day_usd_at_15fps + cost.cost_per_camera_day_usd_at_15fps,
+            )
 
         return ToolActionPricing(tool_action_id=tool_action_id, totals=totals)
 
