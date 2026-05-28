@@ -10,6 +10,7 @@ from testcontainers.postgres import PostgresContainer
 from capabilities_solutions_api.adapters.capabilities_client import CapabilitySnapshot
 from capabilities_solutions_api.adapters.repositories.postgres import PostgresToolActionRepository
 from capabilities_solutions_api.app.use_cases.catalog_service import ToolActionCatalogService
+from capabilities_solutions_api.domain.models import InferenceCost
 from capabilities_solutions_api.main.app import create_app
 from capabilities_solutions_api.main.settings import Settings
 
@@ -28,10 +29,18 @@ def mock_capabilities_client():
             id=uuid4(),
             kind="model",
             sha="mock_sha_resolve",
-            cost={"cost_type": "per_frame", "unit_cost_usd": 0.000002},
+            cost=InferenceCost(
+                hardware="T4",
+                rate_per_hour_usd=0.5,
+                inference_time_ms_per_frame=10.0,
+                cost_per_frame_usd=0.000002,
+                cost_per_camera_day_usd_at_15fps=2.0,
+            ),
+            status="active",
         )
     )
     client.get_by_sha = AsyncMock(return_value=None)
+    client.list_trained_for_blueprint = AsyncMock(return_value=[])
     return client
 
 
@@ -50,6 +59,16 @@ async def app(postgres_container, mock_capabilities_client):
             capabilities_client=mock_capabilities_client,
         )
         yield application
+
+
+@pytest.fixture(autouse=True)
+async def _reset_db(app):
+    # The postgres container is session-scoped, so rows persist across tests and
+    # the deterministic tool-action sha collides (409). Truncate after each test.
+    yield
+    async with app.state.db_pool.connection() as conn:
+        async with conn.transaction():
+            await conn.execute("TRUNCATE tool_actions RESTART IDENTITY CASCADE")
 
 
 @pytest.fixture

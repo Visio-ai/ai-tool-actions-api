@@ -15,6 +15,9 @@ class CapabilitySnapshot:
     kind: str
     sha: str
     cost: InferenceCost | None
+    status: str = "draft"
+    blueprint_id: UUID | None = None
+    default_foundation_id: UUID | None = None
 
 
 class CapabilitiesClient:
@@ -38,6 +41,17 @@ class CapabilitiesClient:
         resp.raise_for_status()
         return _snapshot_from(resp.json())
 
+    async def list_trained_for_blueprint(
+        self, blueprint_id: UUID, status: str = "active"
+    ) -> list[CapabilitySnapshot]:
+        """Trained models instantiated from a blueprint, newest first (server-ordered)."""
+        resp = await self._client.get(
+            f"{self._base_url}/capabilities",
+            params={"kind": "model", "blueprint_id": str(blueprint_id), "status": status},
+        )
+        resp.raise_for_status()
+        return [_snapshot_from(item) for item in resp.json()]
+
 
 def _inference_cost_from(d: dict | None) -> InferenceCost | None:
     if not d:
@@ -51,6 +65,10 @@ def _inference_cost_from(d: dict | None) -> InferenceCost | None:
     )
 
 
+def _opt_uuid(value: str | None) -> UUID | None:
+    return UUID(value) if value else None
+
+
 def _snapshot_from(data: dict) -> CapabilitySnapshot:
     # service capabilities carry a free-form `cost` dict (different schema);
     # only inference_cost has the InferenceCost shape
@@ -60,4 +78,7 @@ def _snapshot_from(data: dict) -> CapabilitySnapshot:
         kind=data["kind"],
         sha=data["sha"],
         cost=_inference_cost_from(raw_cost),
+        status=data.get("status", "draft"),
+        blueprint_id=_opt_uuid(data.get("blueprint_id")),
+        default_foundation_id=_opt_uuid(data.get("default_foundation_id")),
     )
